@@ -6,4 +6,4 @@ description = "A lightweight text editor for the terminal, written in Rust"
 edition = "2024"
 
 [dependencies]
-terminon = "4.0"
+crossterm = "0.29"
