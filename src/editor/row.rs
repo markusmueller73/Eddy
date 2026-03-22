@@ -51,7 +51,16 @@ impl Row {
             self.len += 1;
             return;
         }
-        self.content.insert(at, char);
+        let mut new_content = String::new();
+        for (idx,c) in self.content.chars().enumerate() {
+            if idx == at {
+                new_content.push(char);
+                new_content.push(c);
+            } else {
+                new_content.push(c);
+            }
+        }
+        self.content = new_content;
         self.len = self.content.chars().count();
     }
 
@@ -61,15 +70,32 @@ impl Row {
             self.len += 1;
             return;
         }
-        self.content.insert_str(at, str);
+        let mut new_content = String::new();
+        for (idx,c) in self.content.chars().enumerate() {
+            if idx == at {
+                new_content.push_str(str);
+                new_content.push(c);
+            } else {
+                new_content.push(c);
+            }
+        }
+        self.content = new_content;
         self.len = self.content.chars().count();
     }
 
     pub fn split(&mut self, at: usize) -> Row {
-        let string = self.content.clone();
-        let (str1,str2) = string.split_at(at);
-        self.content = str1.to_string();
-        Row::new(str2.to_string())
+        let mut string_before = String::new();
+        let mut string_after = String::new();
+        for (idx,char) in self.content.chars().enumerate() {
+            if idx < at {
+                string_before.push(char);
+            } else {
+                string_after.push(char);
+            }
+        }
+        self.content = string_before;
+        self.len = self.content.chars().count();
+        Row::new(string_after)
     }
 
     pub fn delete (&mut self, at: usize) {

@@ -1,4 +1,4 @@
-use crate::editor::{row::Row, view::Position};
+use crate::editor::{row::Row, position::Position};
 use std::{fs::File, io::{BufRead, BufReader, BufWriter, Write}};
 
 #[cfg(target_family = "windows")]
@@ -94,17 +94,18 @@ impl TextBuffer {
     }
 
     pub fn insert(&mut self, at: &Position, char: char) {
-        if at.y > self.rows.len() {
+        let y = at.y;
+        if y > self.rows.len() {
             return;
         }
-        if char == '\n' {
+        if char == '\n' || char == '\r'{
             self.insert_newline(at);
-        } else if at.y == self.rows.len() {
+        } else if y == self.rows.len() {
             let mut row = Row::default();
             row.insert(0, char);
             self.rows.push(row);
         } else {
-            let row = &mut self.rows[at.y];
+            let row = &mut self.rows[y];
             if char == '\t' {
                 row.insert_str(at.x, "    ");
             } else {
@@ -115,16 +116,17 @@ impl TextBuffer {
     }
 
     pub fn insert_newline(&mut self, at: &Position) {
-        if at.y > self.rows.len() {
+        let y = at.y;
+        if y > self.rows.len() {
             return;
         }
-        if at.y == self.rows.len() {
+        if y == self.rows.len() {
             self.rows.push(Row::default());
             return;
         }
-        let current_row = &mut self.rows[at.y];
+        let current_row = &mut self.rows[y];
         let new_row = current_row.split(at.x);
-        self.rows.insert(at.y + 1, new_row);
+        self.rows.insert(y + 1, new_row);
         self.modified = true;
     }
 

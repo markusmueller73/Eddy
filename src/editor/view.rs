@@ -2,6 +2,8 @@ use crate::editor::{
     TITLE, VERSION,
     buffer::TextBuffer,
     color_pairs::ColorPairs,
+    settings::{EditorSettings, TabType},
+    position::{Position, Size},
     status_message::StatusMessage
 };
 use crossterm::{
@@ -16,6 +18,7 @@ use std::io::{Stdout, Write, stdout};
 
 
 pub struct TerminalView {
+    config: EditorSettings,
     stdout: Stdout,
     buffer: TextBuffer,
     position: Position,
@@ -29,11 +32,12 @@ impl TerminalView {
 
     pub fn new() -> TerminalView {
         let mut tv = TerminalView {
+            config: EditorSettings::default(),
             stdout: stdout(),
             buffer: TextBuffer::new(),
-            position: pos(0, 1),
-            offset: pos(0, 0),
-            size: size(0, 0),
+            position: pos!(0, 0),
+            offset: pos!(0, 1), // leave space for line nummbers and title bar
+            size: size!(0, 0),
             colors: ColorPairs::new(),
             messages: Vec::new()
         };
@@ -70,11 +74,12 @@ impl TerminalView {
     pub fn resize(&mut self, width: usize, height: usize) {
         self.size.width = width;
         self.size.height = height;
+        self.size.height -= 2; // leave space for title and status bar
     }
 
     fn terminal_size(&self) -> Size {
         let (w,h) = crossterm::terminal::size().unwrap_or((80, 25));
-        size(w as usize, h as usize)
+        size!(w as usize, h as usize)
     }
 
     pub fn open_file(&mut self, filename: &str) {
@@ -104,42 +109,55 @@ impl TerminalView {
         self.clear_screen();
         self.print_titlebar();
         // Draw the buffer rows
+        let bar = TerminalView::bar(self.size.width);
         self.use_colors(self.colors.default_pair());
         for y in 0..self.size.height {
-            let row = match self.buffer.row(self.offset.y + y) {
+            let row = match self.buffer.row(y) {
                 Some(row) => row,
                 None => break,
             };
             let line = row.get(0, self.size.width-1);
-            self.clear_line(y+1);
-            self.print_at(pos(0, y+1), &line);
+            if y  == self.position.y {
+                // highlight the current line
+                self.use_colors(self.colors.hilite_pair());
+                self.print_at(pos!(0, y + self.offset.y), &bar);
+                self.print_at(pos!(0, y + self.offset.y), &line);
+                self.use_colors(self.colors.default_pair());
+            } else {
+                self.clear_line(y + self.offset.y);
+                self.print_at(pos!(0, y + self.offset.y), &line);
+            }
         }
         self.print_statusbar();
-        self.move_to(self.position);
+        self.move_to(self.position + self.offset);
         self.flush();
     }
 
     fn print_titlebar(&mut self) {
         let bar = TerminalView::bar(self.size.width);
         self.use_colors(self.colors.bar_pair());
-        self.print_at(pos(0, 0), &bar);
-        let title = format!("{} - {}", TITLE, self.buffer.filename());
+        self.print_at(pos!(0, 0), &bar);
+        let title: String = if self.buffer.is_modified() {
+            format!("{} - {} [*]", TITLE, self.buffer.filename())
+        } else {
+            format!("{} - {}", TITLE, self.buffer.filename())
+        };
         let x = (self.size.width - title.len()) / 2;
-        self.print_at(pos(x, 0), &title);
+        self.print_at(pos!(x, 0), &title);
     }
 
     fn print_statusbar(&mut self) {
         let bar = TerminalView::bar(self.size.width);
         let status = self.get_msg();
         let mut msg_txt = String::new();
-        if let Some(msg) = status { //&& msg.is_expired() {
+        if let Some(msg) = status && !msg.is_expired() {
             msg_txt = msg.get().to_string();
         }
-        let pos_txt = format!("↓{} →{}", self.position.x + 1, self.position.y);
+        let pos_txt = format!("↓{} →{}", self.position.y + self.offset.y, self.position.x + self.offset.x);
         self.use_colors(self.colors.bar_pair());
-        self.print_at(pos(0, self.size.height + 1), &bar);
-        self.print_at(pos(0, self.size.height + 1), &msg_txt);
-        self.print_at(pos(self.size.width - pos_txt.chars().count() - 2, self.size.height + 1), &pos_txt);
+        self.print_at(pos!(0, self.size.height + 1), &bar);
+        self.print_at(pos!(0, self.size.height + 1), &msg_txt);
+        self.print_at(pos!(self.size.width - pos_txt.chars().count() - 2, self.size.height + 1), &pos_txt);
     }
 
     fn bar(length: usize) -> String {
@@ -176,94 +194,99 @@ impl TerminalView {
         self.stdout.queue(style::SetColors(colors)).unwrap();
     }
 
+    pub fn insert_char(&mut self, char: char) {
+        self.buffer.insert(&self.position, char);
+        if char == '\t' && self.config.tab_type == TabType::Space {
+            self.position.x += self.config.tab_size - 1;
+        }
+        self.move_cursor(KeyCode::Right);
+    }
+
+    pub fn insert_newline(&mut self) {
+        self.buffer.insert_newline(&self.position);
+        self.move_cursor(KeyCode::Right);
+    }
+
     pub fn move_cursor(&mut self, key_code: KeyCode) {
         let term_height = self.size.height;
-        let mut term_pos = self.position;
+        let mut cursor = self.position;
         let buff_height = self.buffer.len();
-        let mut buff_width = if let Some(row) = self.buffer.row(term_pos.y) {
+        let mut buff_width = if let Some(row) = self.buffer.row(cursor.y) {
             row.len()
         } else {
             0
         };
         match key_code {
             KeyCode::Up => {
-                if term_pos.y > 0 {
-                    term_pos.y -= 1;
+                if cursor.y > 0 {
+                    cursor.y -= 1;
                 }
             },
             KeyCode::Down => {
-                term_pos.y += 1;
+                if cursor.y < buff_height {
+                    cursor.y += 1;
+                }
             },
             KeyCode::Left => {
-                if term_pos.x > 0 {
-                    term_pos.x -= 1;
-                } else if term_pos.y > 0 {
-                    term_pos.y -= 1;
-                    if let Some(row) = self.buffer.row(term_pos.y) {
-                        term_pos.x = row.len();
+                if cursor.x > 0 {
+                    cursor.x -= 1;
+                } else if cursor.y > 0 {
+                    cursor.y -= 1;
+                    if let Some(row) = self.buffer.row(cursor.y) {
+                        cursor.x = row.len();
                     } else {
-                        term_pos.x = 0;
+                        cursor.x = 0;
                     }
                 }
             },
             KeyCode::Right => {
-                if term_pos.x < buff_width {
-                    term_pos.x += 1;
-                } else if term_pos.y < buff_height {
-                    term_pos.y += 1;
-                    term_pos.x = 0;
+                if cursor.x < buff_width {
+                    cursor.x += 1;
+                } else if cursor.y < buff_height {
+                    cursor.y += 1;
+                    cursor.x = 0;
                 }
             },
             KeyCode::PageUp => {
-                if term_pos.y > term_height {
-                    term_pos.y -= term_height;
+                if cursor.y > term_height {
+                    cursor.y -= term_height;
                 } else {
-                    term_pos.y = 0;
+                    cursor.y = 0;
                 }
             }
             KeyCode::PageDown => {
-                if term_pos.y + term_height < buff_height {
-                    term_pos.y += term_height;
+                if cursor.y + term_height < buff_height {
+                    cursor.y += term_height;
                 } else {
-                    term_pos.y = term_height;
+                    cursor.y = buff_height;
                 }
             }
             KeyCode::Home => {
-                term_pos.x = 0;
+                cursor.x = 0;
             },
             KeyCode::End => {
-                term_pos.x = buff_width;
+                cursor.x = buff_width;
             },
             _ => {}
         }
-        buff_width = if let Some(row) = self.buffer.row(term_pos.y) {
+        buff_width = if let Some(row) = self.buffer.row(cursor.y) {
             row.len()
         } else {
             0
         };
-        if term_pos.x > buff_width {
-            term_pos.x = buff_width;
+        if cursor.x > buff_width {
+            cursor.x = buff_width;
         }
-        self.position = term_pos;
+        self.position = cursor;
     }
-}
 
-#[derive(Copy, Clone, Default, PartialEq, PartialOrd)]
-pub struct Position {
-    pub x: usize,
-    pub y: usize,
-}
+    pub fn delete_char(&mut self) {
+        self.buffer.delete(&self.position);
+    }
 
-pub fn pos(x: usize, y: usize) -> Position {
-    Position {x, y}
-}
+    pub fn delete_char_before(&mut self) {
+        self.move_cursor(KeyCode::Left);
+        self.buffer.delete(&self.position);
+    }
 
-#[derive(Copy, Clone, Default, PartialEq, PartialOrd)]
-pub struct Size {
-    pub width: usize,
-    pub height: usize,
-}
-
-pub fn size(cols: usize, rows: usize) -> Size {
-    Size {width: cols, height: rows}
 }

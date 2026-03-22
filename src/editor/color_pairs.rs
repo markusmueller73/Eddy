@@ -17,7 +17,7 @@ impl ColorPairs {
         ColorPairs {
             bg: Color::Rgb {r: 0, g: 0, b: 0},
             fg: Color::Rgb {r: 224, g: 224, b: 224},
-            bg_hilite: Color::Rgb {r: 64, g: 64, b: 64},
+            bg_hilite: Color::Rgb {r: 48, g: 48, b: 48},
             fg_hilite: Color::Rgb {r: 224, g: 224, b: 224},
             bg_bar: Color::Rgb {r: 192, g: 192, b: 192},
             fg_bar: Color::Rgb {r: 32, g: 32, b: 32},

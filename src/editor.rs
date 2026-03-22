@@ -4,7 +4,10 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 
 mod buffer;
 mod color_pairs;
+#[macro_use]
+mod position;
 mod row;
+mod settings;
 mod status_message;
 mod view;
 
@@ -25,7 +28,7 @@ pub fn run() -> Result<(), i32> {
     // Enter the main loop
     loop {
         // Get the user input
-        if event::poll(std::time::Duration::from_millis(10)).unwrap_or(false) {
+        if event::poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
             // It's guaranteed that the `read()` won't block when the `poll()` function returns `true`
             if let Ok(event) = event::read() {
                 match event {
@@ -42,7 +45,9 @@ pub fn run() -> Result<(), i32> {
                                 }
                                 _ => {}
                             }
-                        } else if key.modifiers == KeyModifiers::CONTROL {
+                            continue;
+                        }
+                        if key.modifiers == KeyModifiers::CONTROL {
                             match key.code {
                                 KeyCode::Char('c') => {
                                     // Copy
@@ -85,7 +90,9 @@ pub fn run() -> Result<(), i32> {
                                 }
                                 _ => {}
                             }
-                        } else if key.modifiers == KeyModifiers::SHIFT {
+                            continue;
+                        }
+                        if key.modifiers == KeyModifiers::SHIFT {
                             match key.code {
                                 KeyCode::Up => {
                                     // Mark
@@ -99,24 +106,40 @@ pub fn run() -> Result<(), i32> {
                                 KeyCode::Right => {
                                     // Mark
                                 }
-                                _ => {}
-                            }
-                        // Without modifiers, process the key normally
-                        } else {
-                            match key.code {
                                 KeyCode::Char(char) => {
-                                    // Insert the character into the buffer
-
+                                    // Insert the upper case character into the buffer
+                                    term_view.insert_char(char);
                                 }
-                                KeyCode::Up | KeyCode::Down |
-                                KeyCode::Left | KeyCode::Right |
-                                KeyCode::PageUp | KeyCode::PageDown |
-                                KeyCode::End | KeyCode::Home => {
-                                    term_view.move_cursor(key.code);
-                                }
-                                KeyCode::Enter => {}
                                 _ => {}
                             }
+                            continue;
+                        }
+                        // Without modifiers, process the key normally
+                        match key.code {
+                            KeyCode::Backspace => {
+                                term_view.delete_char_before();
+                            }
+                            KeyCode::Char(char) => {
+                                // Insert the character into the buffer
+                                term_view.insert_char(char);
+                            }
+                            KeyCode::Delete => {
+                                term_view.delete_char();
+                            }
+                            KeyCode::Enter => {
+                                term_view.insert_newline();
+                            }
+                            KeyCode::Tab => {
+                                term_view.insert_char('\t');
+                            }
+                            // Cursor movement
+                            KeyCode::Up | KeyCode::Down |
+                            KeyCode::Left | KeyCode::Right |
+                            KeyCode::PageUp | KeyCode::PageDown |
+                            KeyCode::End | KeyCode::Home => {
+                                term_view.move_cursor(key.code);
+                            }
+                            _ => {}
                         }
                     }
                     // Resize the viewport
