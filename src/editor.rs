@@ -1,7 +1,4 @@
 // Part of Eddy - A lightweight text editor for the terminal.
-use crate::editor::view::TerminalView;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-
 mod buffer;
 mod color_pairs;
 #[macro_use]
@@ -11,31 +8,26 @@ mod settings;
 mod status_message;
 mod view;
 
+use crate::editor::{row::Row, view::{EditMode, TerminalView}};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+
 pub const TITLE: &str = "Eddy";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_FILENAME: &str = "Untitled";
-
-#[derive(Debug, Default, PartialEq)]
-enum EditorState {
-    #[default]
-    Normal,
-    Insert,
-    UserInput,
-}
 
 /// The main entry function to start the editor.
 /// Process the whole user input here and handle events.
 pub fn run() -> Result<(), i32> {
     let mut term_view = TerminalView::new();
     let mut filename = parse_command_line_arguments();
-    let mut state = EditorState::default();
+    let mut user_input = Row::default();
     let mut show_menu = false;
     if !filename.is_empty() {
         term_view.add_msg(&format!("Opening file: {}", filename));
         term_view.open_file(&filename);
     }
     // Show the initial view
-    term_view.render();
+    term_view.render(&user_input.as_string());
     // Enter the main loop
     loop {
         // Get the user input
@@ -50,8 +42,7 @@ pub fn run() -> Result<(), i32> {
                             match key.code {
                                 KeyCode::Char('s') => {
                                     // Save File As
-                                    state = EditorState::UserInput;
-                                    continue;
+                                    term_view.set_edit_mode(EditMode::InputSaveAs);
                                 }
                                 KeyCode::Char('z') => {
                                     // Redo
@@ -67,6 +58,8 @@ pub fn run() -> Result<(), i32> {
                                 }
                                 KeyCode::Char('f') => {
                                     // Find
+                                    user_input.clear();
+                                    term_view.set_edit_mode(EditMode::InputFind);
                                 }
                                 KeyCode::Char('h') => {
                                     // Show help
@@ -77,6 +70,9 @@ pub fn run() -> Result<(), i32> {
                                 }
                                 KeyCode::Char('n') => {
                                     // New File
+                                }
+                                KeyCode::Char('o') => {
+                                    term_view.set_edit_mode(EditMode::InputLoad);
                                 }
                                 KeyCode::Char('s') => {
                                     // Save File
@@ -120,8 +116,12 @@ pub fn run() -> Result<(), i32> {
                                     // Mark
                                 }
                                 KeyCode::Char(char) => {
-                                    // Insert the upper case character into the buffer
-                                    term_view.insert_char(char);
+                                    // Insert the upper case character into the buffer or into the status bar
+                                    if term_view.user_input_mode() {
+                                        user_input.insert(user_input.len(), char);
+                                    } else {
+                                        term_view.insert_char(char);
+                                    }
                                 }
                                 _ => {}
                             }
@@ -130,38 +130,73 @@ pub fn run() -> Result<(), i32> {
                         // Without modifiers, process the key normally
                         match key.code {
                             KeyCode::Backspace => {
-                                term_view.delete_char_before();
-                            }
-                            KeyCode::Char(char) => {
-                                // Insert the character into the buffer
-                                term_view.insert_char(char);
-                            }
-                            KeyCode::Delete => {
-                                term_view.delete_char();
-                            }
-                            KeyCode::Enter => {
-                                if state == EditorState::UserInput {
-                                    state = EditorState::Normal;
+                                if term_view.user_input_mode() {
+                                    if !user_input.is_empty() {
+                                        term_view.move_user_input_cursor(KeyCode::Left);
+                                        user_input.delete(user_input.len()-1);
+                                    }
                                 } else {
-                                    term_view.insert_newline();
+                                    term_view.delete_char_before();
                                 }
                             }
-                            // KeyCode::Insert => {
-                            //     state = if state == EditorState::Insert {
-                            //         EditorState::Normal
-                            //     } else {
-                            //         EditorState::Insert
-                            //     };
-                            // }
+                            KeyCode::Char(char) => {
+                                // Insert the character into the buffer or the user input in the status bar
+                                if term_view.user_input_mode() {
+                                    user_input.insert(user_input.len(), char);
+                                } else {
+                                    term_view.insert_char(char);
+                                }
+
+                            }
+                            KeyCode::Delete => {
+                                if term_view.user_input_mode() {
+                                    //user_input.delete(user_input.len());
+                                } else {
+                                    term_view.delete_char();
+                                }
+                            }
+                            KeyCode::Enter => {
+                                match term_view.edit_mode() {
+                                    EditMode::InputFind => {
+                                        let (x,y) = term_view.find_text(&user_input.as_string());
+                                        if x == 0 && y == 0 {
+                                            term_view.add_msg(&format!("Search phrase '{}' not found.", user_input.as_string()));
+                                        } else {
+                                            term_view.add_msg(&format!("Found text at position {}x{}.", x, y));
+                                        }
+                                        term_view.set_last_mode();
+                                    },
+                                    EditMode::InputLoad => {},
+                                    EditMode::InputSaveAs => {},
+                                    _ => {
+                                        term_view.insert_newline();
+                                    }
+                                }
+                            }
+                            KeyCode::Insert => {
+                                if term_view.edit_mode() == EditMode::Insert {
+                                    term_view.set_edit_mode(EditMode::Normal);
+                                } else if term_view.edit_mode() == EditMode::Normal {
+                                    //term_view.set_edit_mode(EditMode::Insert);
+                                }
+                            }
                             KeyCode::Tab => {
                                 term_view.insert_char('\t');
                             }
                             // Cursor movement
                             KeyCode::Up | KeyCode::Down |
-                            KeyCode::Left | KeyCode::Right |
                             KeyCode::PageUp | KeyCode::PageDown |
                             KeyCode::End | KeyCode::Home => {
-                                term_view.move_cursor(key.code);
+                                if !term_view.user_input_mode() {
+                                    term_view.move_cursor(key.code);
+                                }
+                            }
+                            KeyCode::Left | KeyCode::Right => {
+                                if term_view.user_input_mode() {
+                                    term_view.move_user_input_cursor(key.code);
+                                } else {
+                                    term_view.move_cursor(key.code);
+                                }
                             }
                             _ => {}
                         }
@@ -175,7 +210,7 @@ pub fn run() -> Result<(), i32> {
             }
         }
         // Show the initial view
-        term_view.render();
+        term_view.render(&user_input.as_string());
     }
     term_view.quit();
     Ok(())
