@@ -55,7 +55,8 @@ impl TextBuffer {
             Ok(file) => {
                 let mut buf_writer = BufWriter::new(file);
                 for row in &self.rows {
-                    if buf_writer.write_all(row.as_bytes()).is_err() {
+                    let row_string = row.as_string();
+                    if buf_writer.write_all(row_string.as_bytes()).is_err() {
                         eprintln!("Error: can't write to file {}.", file_name);
                     }
                     if buf_writer.write_all(EOL.as_bytes()).is_err() {

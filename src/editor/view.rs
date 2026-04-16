@@ -14,7 +14,7 @@ use crossterm::{
     style,
     terminal::{self, ClearType}
 };
-use std::io::{Stdout, Write, stdout};
+use std::{io::{Stdout, Write, stdout}, time::Instant};
 
 
 pub struct TerminalView {
@@ -25,11 +25,13 @@ pub struct TerminalView {
     offset: Position,
     size: Size,
     colors: ColorPairs,
+    start_time: Instant,
     messages: Vec<StatusMessage>
 }
 
 impl TerminalView {
 
+    /// Creates a new `TerminalView` instance with default settings.
     pub fn new() -> TerminalView {
         let mut tv = TerminalView {
             config: EditorSettings::default(),
@@ -39,6 +41,7 @@ impl TerminalView {
             offset: pos!(0, 1), // leave space for line nummbers and title bar
             size: size!(0, 0),
             colors: ColorPairs::new(),
+            start_time: Instant::now(),
             messages: Vec::new()
         };
         if terminal::enable_raw_mode().is_err() {
@@ -109,18 +112,26 @@ impl TerminalView {
         self.clear_screen();
         self.print_titlebar();
         // Draw the buffer rows
-        let bar = TerminalView::bar(self.size.width);
         self.use_colors(self.colors.default_pair());
         for y in 0..self.size.height {
+            if self.buffer.is_empty() {
+                break;
+            }
             let row = match self.buffer.row(y) {
                 Some(row) => row,
                 None => break,
             };
-            let line = row.get(0, self.size.width-1);
+            let start = if row.len() >= self.size.width && self.offset.x + self.position.x >= self.size.width {
+                (self.offset.x + self.position.x) - self.size.width
+            } else {
+                self.offset.x
+            };
+            let end = start + self.size.width - 1;
+            let line = row.get(start, end);
             if y  == self.position.y {
                 // highlight the current line
                 self.use_colors(self.colors.hilite_pair());
-                self.print_at(pos!(0, y + self.offset.y), &bar);
+                self.clear_line(y + self.offset.y);
                 self.print_at(pos!(0, y + self.offset.y), &line);
                 self.use_colors(self.colors.default_pair());
             } else {
@@ -134,20 +145,18 @@ impl TerminalView {
     }
 
     fn print_titlebar(&mut self) {
-        let bar = TerminalView::bar(self.size.width);
-        self.use_colors(self.colors.bar_pair());
-        self.print_at(pos!(0, 0), &bar);
         let title: String = if self.buffer.is_modified() {
             format!("{} - {} [*]", TITLE, self.buffer.filename())
         } else {
             format!("{} - {}", TITLE, self.buffer.filename())
         };
         let x = (self.size.width - title.len()) / 2;
+        self.use_colors(self.colors.bar_pair());
+        self.clear_line(0);
         self.print_at(pos!(x, 0), &title);
     }
 
     fn print_statusbar(&mut self) {
-        let bar = TerminalView::bar(self.size.width);
         let status = self.get_msg();
         let mut msg_txt = String::new();
         if let Some(msg) = status && !msg.is_expired() {
@@ -155,17 +164,9 @@ impl TerminalView {
         }
         let pos_txt = format!("↓{} →{}", self.position.y + self.offset.y, self.position.x + self.offset.x);
         self.use_colors(self.colors.bar_pair());
-        self.print_at(pos!(0, self.size.height + 1), &bar);
+        self.clear_line(self.size.height + 1);
         self.print_at(pos!(0, self.size.height + 1), &msg_txt);
         self.print_at(pos!(self.size.width - pos_txt.chars().count() - 2, self.size.height + 1), &pos_txt);
-    }
-
-    fn bar(length: usize) -> String {
-        let mut string = String::new();
-        for _ in 0..length {
-            string.push(' ');
-        }
-        string
     }
 
     fn flush(&mut self) {
@@ -177,7 +178,7 @@ impl TerminalView {
     }
 
     fn clear_line(&mut self, line: usize) {
-        self.stdout.queue(cursor::MoveTo(0, line as u16)).unwrap();
+        self.move_to(pos!(0, line));
         self.stdout.queue(terminal::Clear(ClearType::CurrentLine)).unwrap();
     }
 
@@ -185,9 +186,13 @@ impl TerminalView {
         self.stdout.queue(cursor::MoveTo(at.x as u16, at.y as u16)).unwrap();
     }
 
-    fn print_at(&mut self, at: Position, text: &str) {
-        self.stdout.queue(cursor::MoveTo(at.x as u16, at.y as u16)).unwrap();
+    fn print(&mut self, text: &str) {
         self.stdout.queue(style::Print(text)).unwrap();
+    }
+
+    fn print_at(&mut self, at: Position, text: &str) {
+        self.move_to(at);
+        self.print(text);
     }
 
     fn use_colors(&mut self, colors: style::Colors) {
@@ -205,6 +210,15 @@ impl TerminalView {
     pub fn insert_newline(&mut self) {
         self.buffer.insert_newline(&self.position);
         self.move_cursor(KeyCode::Right);
+    }
+
+    pub fn delete_char(&mut self) {
+        self.buffer.delete(&self.position);
+    }
+
+    pub fn delete_char_before(&mut self) {
+        self.move_cursor(KeyCode::Left);
+        self.buffer.delete(&self.position);
     }
 
     pub fn move_cursor(&mut self, key_code: KeyCode) {
@@ -278,15 +292,6 @@ impl TerminalView {
             cursor.x = buff_width;
         }
         self.position = cursor;
-    }
-
-    pub fn delete_char(&mut self) {
-        self.buffer.delete(&self.position);
-    }
-
-    pub fn delete_char_before(&mut self) {
-        self.move_cursor(KeyCode::Left);
-        self.buffer.delete(&self.position);
     }
 
 }

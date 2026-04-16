@@ -15,9 +15,20 @@ pub const TITLE: &str = "Eddy";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_FILENAME: &str = "Untitled";
 
+#[derive(Debug, Default, PartialEq)]
+enum EditorState {
+    #[default]
+    Normal,
+    Insert,
+    UserInput,
+}
+
+/// The main entry function to start the editor.
+/// Process the whole user input here and handle events.
 pub fn run() -> Result<(), i32> {
     let mut term_view = TerminalView::new();
     let mut filename = parse_command_line_arguments();
+    let mut state = EditorState::default();
     let mut show_menu = false;
     if !filename.is_empty() {
         term_view.add_msg(&format!("Opening file: {}", filename));
@@ -39,6 +50,8 @@ pub fn run() -> Result<(), i32> {
                             match key.code {
                                 KeyCode::Char('s') => {
                                     // Save File As
+                                    state = EditorState::UserInput;
+                                    continue;
                                 }
                                 KeyCode::Char('z') => {
                                     // Redo
@@ -127,8 +140,19 @@ pub fn run() -> Result<(), i32> {
                                 term_view.delete_char();
                             }
                             KeyCode::Enter => {
-                                term_view.insert_newline();
+                                if state == EditorState::UserInput {
+                                    state = EditorState::Normal;
+                                } else {
+                                    term_view.insert_newline();
+                                }
                             }
+                            // KeyCode::Insert => {
+                            //     state = if state == EditorState::Insert {
+                            //         EditorState::Normal
+                            //     } else {
+                            //         EditorState::Insert
+                            //     };
+                            // }
                             KeyCode::Tab => {
                                 term_view.insert_char('\t');
                             }

@@ -3,6 +3,7 @@ name = "eddy"
 version = "0.1.0"
 author = "Markus Müller"
 description = "A lightweight text editor for the terminal, written in Rust"
+license =  "MIT license"
 edition = "2024"
 
 [dependencies]
