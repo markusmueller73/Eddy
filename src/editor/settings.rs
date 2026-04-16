@@ -1,3 +1,5 @@
+use crate::editor::{view::EditMode};
+
 #[allow(unused)]
 #[derive(Default, Clone, Copy, PartialEq, PartialOrd)]
 pub enum TabType {
@@ -6,7 +8,9 @@ pub enum TabType {
     Tab,
 }
 
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
 pub struct EditorSettings {
+    pub edit_mode: EditMode,
     pub tab_type: TabType,
     pub tab_size: usize,
 }
@@ -14,6 +18,7 @@ pub struct EditorSettings {
 impl Default for EditorSettings {
     fn default() -> Self {
         Self {
+            edit_mode: EditMode::Normal,
             tab_type: TabType::Space,
             tab_size: 4,
         }

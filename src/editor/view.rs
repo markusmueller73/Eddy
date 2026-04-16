@@ -4,7 +4,7 @@ use crate::editor::{
     color_pairs::ColorPairs,
     settings::{EditorSettings, TabType},
     position::{Position, Size},
-    status_message::StatusMessage
+    status_message::*
 };
 use crossterm::{
     ExecutableCommand,
@@ -16,12 +16,14 @@ use crossterm::{
 };
 use std::{io::{Stdout, Write, stdout}, time::Instant};
 
-
 pub struct TerminalView {
     config: EditorSettings,
     stdout: Stdout,
     buffer: TextBuffer,
+    edit_mode: EditMode,
+    last_mode: EditMode,
     position: Position,
+    last_position: Position,
     offset: Position,
     size: Size,
     colors: ColorPairs,
@@ -33,11 +35,15 @@ impl TerminalView {
 
     /// Creates a new `TerminalView` instance with default settings.
     pub fn new() -> TerminalView {
+        let cfg = EditorSettings::default();
         let mut tv = TerminalView {
-            config: EditorSettings::default(),
+            config: cfg,
             stdout: stdout(),
             buffer: TextBuffer::new(),
+            edit_mode: cfg.edit_mode,
+            last_mode: cfg.edit_mode,
             position: pos!(0, 0),
+            last_position: pos!(0, 0),
             offset: pos!(0, 1), // leave space for line nummbers and title bar
             size: size!(0, 0),
             colors: ColorPairs::new(),
@@ -68,10 +74,13 @@ impl TerminalView {
             std::process::exit(3);
         }
         println!("Message Log:");
+        println!("------------");
         for msg in &self.messages {
-            println!("{}", msg.get());
+            println!("[{:08}] {}", msg.time().duration_since(self.start_time).as_millis(), msg.get());
         }
+        println!("------------");
         println!("Text Buffer: {} entries", self.buffer.len());
+        println!("Last cursor pos: {}x{}", self.position.x, self.position.y)
     }
 
     pub fn resize(&mut self, width: usize, height: usize) {
@@ -83,6 +92,41 @@ impl TerminalView {
     fn terminal_size(&self) -> Size {
         let (w,h) = crossterm::terminal::size().unwrap_or((80, 25));
         size!(w as usize, h as usize)
+    }
+
+    pub fn set_edit_mode(&mut self, edit_mode: EditMode) {
+        if edit_mode == EditMode::Insert || edit_mode == EditMode::Normal {
+            self.last_mode = edit_mode
+        } else {
+            self.last_position = self.position;
+            let x = if self.edit_mode == EditMode::InputFind {
+                SEARCH_TEXT.len()
+            } else if self.edit_mode == EditMode::InputLoad {
+                LOAD_FILE_TEXT.len()
+            } else {
+                SAVE_FILE_TEXT.len()
+            };
+            self.position = pos!(x + 1, self.size.height + 1);
+            self.move_to(self.position);
+        }
+        self.edit_mode = edit_mode;
+    }
+
+    pub fn set_last_mode(&mut self) {
+        self.edit_mode = self.last_mode;
+        self.position = self.last_position;
+        self.move_to(self.position);
+    }
+
+    pub fn edit_mode(&self) -> EditMode {
+        self.edit_mode
+    }
+
+    pub fn user_input_mode(&self) -> bool {
+        if self.edit_mode == EditMode::Insert || self.edit_mode == EditMode::Normal {
+            return false;
+        }
+        true
     }
 
     pub fn open_file(&mut self, filename: &str) {
@@ -107,7 +151,7 @@ impl TerminalView {
         self.messages.last()
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&mut self, user_input: &str) {
         self.use_colors(self.colors.default_pair());
         self.clear_screen();
         self.print_titlebar();
@@ -139,7 +183,7 @@ impl TerminalView {
                 self.print_at(pos!(0, y + self.offset.y), &line);
             }
         }
-        self.print_statusbar();
+        self.print_statusbar(user_input);
         self.move_to(self.position + self.offset);
         self.flush();
     }
@@ -156,7 +200,7 @@ impl TerminalView {
         self.print_at(pos!(x, 0), &title);
     }
 
-    fn print_statusbar(&mut self) {
+    fn print_statusbar(&mut self, user_input: &str) {
         let status = self.get_msg();
         let mut msg_txt = String::new();
         if let Some(msg) = status && !msg.is_expired() {
@@ -165,8 +209,14 @@ impl TerminalView {
         let pos_txt = format!("↓{} →{}", self.position.y + self.offset.y, self.position.x + self.offset.x);
         self.use_colors(self.colors.bar_pair());
         self.clear_line(self.size.height + 1);
-        self.print_at(pos!(0, self.size.height + 1), &msg_txt);
-        self.print_at(pos!(self.size.width - pos_txt.chars().count() - 2, self.size.height + 1), &pos_txt);
+        if self.user_input_mode() {
+            if self.edit_mode == EditMode::InputFind {
+                self.print_at(pos!(0, self.size.height + 1), &format!("{} {}", SEARCH_TEXT, user_input));
+            }
+        } else {
+            self.print_at(pos!(0, self.size.height + 1),&msg_txt);
+            self.print_at(pos!(self.size.width - pos_txt.chars().count() - 2, self.size.height + 1), &pos_txt);
+        }
     }
 
     fn flush(&mut self) {
@@ -219,6 +269,14 @@ impl TerminalView {
     pub fn delete_char_before(&mut self) {
         self.move_cursor(KeyCode::Left);
         self.buffer.delete(&self.position);
+    }
+
+    pub fn find_text(&mut self, string_to_find: &str) -> (usize,usize) {
+        if let Some(position) = self.buffer.find(string_to_find, &(self.position + self.offset)) {
+            (position.x,position.y)
+        } else {
+            (0,0)
+        }
     }
 
     pub fn move_cursor(&mut self, key_code: KeyCode) {
@@ -294,4 +352,43 @@ impl TerminalView {
         self.position = cursor;
     }
 
+    pub fn move_user_input_cursor(&mut self, key_code: KeyCode) {
+        let term_width = self.size.width;
+        let min_x = if self.edit_mode == EditMode::InputFind {
+            SEARCH_TEXT.len()
+        } else if self.edit_mode == EditMode::InputLoad {
+            LOAD_FILE_TEXT.len()
+        } else {
+            SAVE_FILE_TEXT.len()
+        };
+        let mut cursor = self.position;
+        match key_code {
+            KeyCode::Left => {
+                if cursor.x > min_x + 1 {
+                    cursor.x -= 1;
+                }
+            },
+            KeyCode::Right => {
+                if cursor.x < term_width - 1 {
+                    cursor.x += 1;
+                }
+            }
+            _ => {}
+        }
+        if cursor.x > term_width - 1 {
+            cursor.x = term_width - 1;
+        }
+        self.position = cursor;
+    }
+
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub enum EditMode {
+    InputFind,
+    InputLoad,
+    InputSaveAs,
+    Insert,
+    #[default]
+    Normal,
 }

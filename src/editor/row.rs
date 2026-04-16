@@ -21,6 +21,10 @@ impl Row {
         self.content.is_empty()
     }
 
+    pub fn clear(&mut self) {
+        self.content.clear();
+    }
+
     pub fn as_string(&self) -> String {
         self.content.iter().collect()
     }
