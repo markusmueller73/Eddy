@@ -24,6 +24,12 @@ impl std::ops::Sub for Position {
     }
 }
 
+impl std::fmt::Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({}x{})", self.x, self.y)
+    }
+}
+
 #[macro_export]
 macro_rules! pos {
     ($x:expr, $y:expr) => {

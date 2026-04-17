@@ -5,29 +5,35 @@ mod color_pairs;
 mod position;
 mod row;
 mod settings;
+mod status_input;
 mod status_message;
 mod view;
 
-use crate::editor::{row::Row, view::{EditMode, TerminalView}};
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crate::editor::{view::{EditMode, TerminalView}};
+use crossterm::{event::{self, Event, KeyCode, KeyModifiers}};
 
 pub const TITLE: &str = "Eddy";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_FILENAME: &str = "Untitled";
 
 /// The main entry function to start the editor.
-/// Process the whole user input here and handle events.
+/// Processed the whole user input here and handle events.
 pub fn run() -> Result<(), i32> {
-    let mut term_view = TerminalView::new();
-    let mut filename = parse_command_line_arguments();
-    let mut user_input = Row::default();
+    // The instance for the terminal view, initialize the raw mode and the alt screen buffer
+    let mut view = TerminalView::new();
+    // A switch, to show a command help similar to a menu bar
     let mut show_menu = false;
+    // A switch to indicate if a new file should be created
+    let mut new_file = false;
+    // Parse the command line arguments for the initial file to open,
+    // the function is at the bottom of this rs-file
+    let mut filename = parse_command_line_arguments();
     if !filename.is_empty() {
-        term_view.add_msg(&format!("Opening file: {}", filename));
-        term_view.open_file(&filename);
+        view.add_msg(&format!("Opening file: {}", filename));
+        view.open_file(&filename);
     }
-    // Show the initial view
-    term_view.render(&user_input.as_string());
+    // Show the initial view at the frist time
+    view.render();
     // Enter the main loop
     loop {
         // Get the user input
@@ -35,14 +41,15 @@ pub fn run() -> Result<(), i32> {
             // It's guaranteed that the `read()` won't block when the `poll()` function returns `true`
             if let Ok(event) = event::read() {
                 match event {
+                    // Handle key events
                     Event::Key(key) => {
-                        // Handle key events
                         // First check the used modifiers like Alt, Control, Shift
                         if key.modifiers == KeyModifiers::CONTROL && key.modifiers == KeyModifiers::SHIFT {
                             match key.code {
                                 KeyCode::Char('s') => {
                                     // Save File As
-                                    term_view.set_edit_mode(EditMode::InputSaveAs);
+                                    view.user_input_clear();
+                                    view.set_edit_mode(EditMode::InputSaveAs);
                                 }
                                 KeyCode::Char('z') => {
                                     // Redo
@@ -55,32 +62,46 @@ pub fn run() -> Result<(), i32> {
                             match key.code {
                                 KeyCode::Char('c') => {
                                     // Copy
+                                    view.copy_marked_text_to_clipboard();
                                 }
                                 KeyCode::Char('f') => {
                                     // Find
-                                    user_input.clear();
-                                    term_view.set_edit_mode(EditMode::InputFind);
+                                    view.user_input_clear();
+                                    view.set_edit_mode(EditMode::InputFind);
                                 }
                                 KeyCode::Char('h') => {
                                     // Show help
-                                    if !show_menu {
-                                        // Show menu
-                                        show_menu = true;
-                                    }
+                                    show_menu = !show_menu;
                                 }
                                 KeyCode::Char('n') => {
                                     // New File
+                                    if view.is_modified() {
+                                        if filename == DEFAULT_FILENAME || filename.is_empty() {
+                                            view.user_input_clear();
+                                            view.set_edit_mode(EditMode::InputSaveAs);
+                                            new_file = true;
+                                        } else {
+                                            view.save_file(&filename);
+                                            view.new_file();
+                                            view.set_last_mode();
+                                        }
+                                    } else {
+                                        view.new_file();
+                                    }
                                 }
                                 KeyCode::Char('o') => {
-                                    term_view.set_edit_mode(EditMode::InputLoad);
+                                    view.user_input_clear();
+                                    view.set_edit_mode(EditMode::InputLoad);
                                 }
                                 KeyCode::Char('s') => {
                                     // Save File
-                                    if filename.is_empty(){
-                                        // Set new file name
-                                        filename = DEFAULT_FILENAME.to_string();
+                                    if filename == DEFAULT_FILENAME || filename.is_empty() {
+                                        view.user_input_clear();
+                                        view.set_edit_mode(EditMode::InputSaveAs);
+                                    } else {
+                                        view.save_file(&filename);
+                                        view.set_last_mode();
                                     }
-                                    term_view.save_file(&filename);
                                 }
                                 KeyCode::Char('q') => {
                                     break;
@@ -93,6 +114,7 @@ pub fn run() -> Result<(), i32> {
                                 }
                                 KeyCode::Char('x') => {
                                     // Cut
+                                    view.copy_marked_text_to_clipboard();
                                 }
                                 KeyCode::Char('z') => {
                                     // Undo
@@ -103,24 +125,23 @@ pub fn run() -> Result<(), i32> {
                         }
                         if key.modifiers == KeyModifiers::SHIFT {
                             match key.code {
-                                KeyCode::Up => {
+                                KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
                                     // Mark
-                                }
-                                KeyCode::Down => {
-                                    // Mark
-                                }
-                                KeyCode::Left => {
-                                    // Mark
-                                }
-                                KeyCode::Right => {
-                                    // Mark
+                                    if view.is_marking() {
+                                        //view.move_cursor(key.code);
+                                        view.end_marking();
+                                        view.move_cursor(key.code);
+                                    } else {
+                                        view.start_marking();
+                                        view.move_cursor(key.code);
+                                    }
                                 }
                                 KeyCode::Char(char) => {
                                     // Insert the upper case character into the buffer or into the status bar
-                                    if term_view.user_input_mode() {
-                                        user_input.insert(user_input.len(), char);
+                                    if view.user_input_mode() {
+                                        view.user_input_insert_char(char);
                                     } else {
-                                        term_view.insert_char(char);
+                                        view.insert_char(char);
                                     }
                                 }
                                 _ => {}
@@ -130,72 +151,93 @@ pub fn run() -> Result<(), i32> {
                         // Without modifiers, process the key normally
                         match key.code {
                             KeyCode::Backspace => {
-                                if term_view.user_input_mode() {
-                                    if !user_input.is_empty() {
-                                        term_view.move_user_input_cursor(KeyCode::Left);
-                                        user_input.delete(user_input.len()-1);
-                                    }
+                                if view.user_input_mode() {
+                                    view.user_input_move_cursor(KeyCode::Left);
+                                    view.user_input_delete_char();
                                 } else {
-                                    term_view.delete_char_before();
+                                    view.delete_char_before();
                                 }
                             }
                             KeyCode::Char(char) => {
                                 // Insert the character into the buffer or the user input in the status bar
-                                if term_view.user_input_mode() {
-                                    user_input.insert(user_input.len(), char);
+                                if view.user_input_mode() {
+                                    view.user_input_insert_char(char);
                                 } else {
-                                    term_view.insert_char(char);
+                                    view.insert_char(char);
                                 }
 
                             }
                             KeyCode::Delete => {
-                                if term_view.user_input_mode() {
-                                    //user_input.delete(user_input.len());
+                                if view.user_input_mode() {
+                                    view.user_input_delete_char();
                                 } else {
-                                    term_view.delete_char();
+                                    view.delete_char();
                                 }
                             }
                             KeyCode::Enter => {
-                                match term_view.edit_mode() {
+                                match view.edit_mode() {
                                     EditMode::InputFind => {
-                                        let (x,y) = term_view.find_text(&user_input.as_string());
+                                        let (x,y) = view.find_text(&view.user_input_get());
                                         if x == 0 && y == 0 {
-                                            term_view.add_msg(&format!("Search phrase '{}' not found.", user_input.as_string()));
+                                            view.add_msg(&format!("Search phrase '{}' not found.", view.user_input_get()));
                                         } else {
-                                            term_view.add_msg(&format!("Found text at position {}x{}.", x, y));
+                                            view.add_msg(&format!("Found text at position {}x{}.", x, y));
                                         }
-                                        term_view.set_last_mode();
+                                        view.set_last_mode();
                                     },
-                                    EditMode::InputLoad => {},
-                                    EditMode::InputSaveAs => {},
+                                    EditMode::InputLoad => {
+                                        filename = view.user_input_get();
+                                        if filename.is_empty() {
+                                            view.add_msg("Please enter a valid filename.");
+                                        } else {
+                                            view.open_file(&filename);
+                                            view.set_last_mode();
+                                        }
+                                    },
+                                    EditMode::InputSaveAs => {
+                                        filename = view.user_input_get();
+                                        if filename.is_empty() {
+                                            view.add_msg("Please enter a valid filename.");
+                                        } else {
+                                            view.save_file(&filename);
+                                            if new_file {
+                                                view.new_file();
+                                                new_file = false;
+                                            }
+                                            view.set_last_mode();
+                                        }
+                                    },
                                     _ => {
-                                        term_view.insert_newline();
+                                        view.insert_newline();
                                     }
                                 }
                             }
                             KeyCode::Insert => {
-                                if term_view.edit_mode() == EditMode::Insert {
-                                    term_view.set_edit_mode(EditMode::Normal);
-                                } else if term_view.edit_mode() == EditMode::Normal {
-                                    //term_view.set_edit_mode(EditMode::Insert);
+                                if view.edit_mode() == EditMode::Insert {
+                                    view.set_edit_mode(EditMode::Normal);
+                                } else if view.edit_mode() == EditMode::Normal {
+                                    //view.set_edit_mode(EditMode::Insert);
                                 }
                             }
                             KeyCode::Tab => {
-                                term_view.insert_char('\t');
+                                view.insert_char('\t');
                             }
                             // Cursor movement
                             KeyCode::Up | KeyCode::Down |
                             KeyCode::PageUp | KeyCode::PageDown |
                             KeyCode::End | KeyCode::Home => {
-                                if !term_view.user_input_mode() {
-                                    term_view.move_cursor(key.code);
+                                if view.is_marking() {
+                                    view.reset_marking();
+                                }
+                                if !view.user_input_mode() {
+                                    view.move_cursor(key.code);
                                 }
                             }
                             KeyCode::Left | KeyCode::Right => {
-                                if term_view.user_input_mode() {
-                                    term_view.move_user_input_cursor(key.code);
+                                if view.user_input_mode() {
+                                    view.user_input_move_cursor(key.code);
                                 } else {
-                                    term_view.move_cursor(key.code);
+                                    view.move_cursor(key.code);
                                 }
                             }
                             _ => {}
@@ -203,16 +245,16 @@ pub fn run() -> Result<(), i32> {
                     }
                     // Resize the viewport
                     Event::Resize(width, height) => {
-                        term_view.resize(width as usize, height as usize);
+                        view.resize(width as usize, height as usize);
                     }
                     _ => {},
                 }
             }
         }
         // Show the initial view
-        term_view.render(&user_input.as_string());
+        view.render();
     }
-    term_view.quit();
+    view.quit();
     Ok(())
 }
 

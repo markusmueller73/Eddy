@@ -4,11 +4,13 @@ use crate::editor::{
     color_pairs::ColorPairs,
     settings::{EditorSettings, TabType},
     position::{Position, Size},
-    status_message::*
+    status_input::*,
+    status_message::StatusMessage,
 };
 use crossterm::{
     ExecutableCommand,
     QueueableCommand,
+    clipboard::CopyToClipboard,
     cursor,
     event::KeyCode,
     style,
@@ -20,11 +22,16 @@ pub struct TerminalView {
     config: EditorSettings,
     stdout: Stdout,
     buffer: TextBuffer,
+    user_input: StatusInput,
     edit_mode: EditMode,
     last_mode: EditMode,
     position: Position,
     last_position: Position,
     offset: Position,
+    marking: bool,
+    marked_text: String,
+    marking_start: Position,
+    marking_end: Position,
     size: Size,
     colors: ColorPairs,
     start_time: Instant,
@@ -40,21 +47,28 @@ impl TerminalView {
             config: cfg,
             stdout: stdout(),
             buffer: TextBuffer::new(),
+            user_input: StatusInput::new(),
             edit_mode: cfg.edit_mode,
             last_mode: cfg.edit_mode,
-            position: pos!(0, 0),
-            last_position: pos!(0, 0),
+            position: Position::default(),
+            last_position: Position::default(),
             offset: pos!(0, 1), // leave space for line nummbers and title bar
-            size: size!(0, 0),
+            marking: false,
+            marked_text: String::new(),
+            marking_start: Position::default(),
+            marking_end: Position::default(),
+            size: Size::default(),
             colors: ColorPairs::new(),
             start_time: Instant::now(),
             messages: Vec::new()
         };
         if terminal::enable_raw_mode().is_err() {
+            tv.add_msg("Error, can't enable terminal raw mode.");
             eprintln!("{}: Error, can't enable terminal raw mode.", TITLE);
             std::process::exit(1);
         }
         if tv.stdout.execute(terminal::EnterAlternateScreen).is_err() {
+            tv.add_msg("Error, can't enter alternate screen.");
             eprintln!("{}: Error, can't enter alternate screen.", TITLE);
             terminal::disable_raw_mode().unwrap();
             std::process::exit(2);
@@ -67,16 +81,18 @@ impl TerminalView {
 
     pub fn quit(&mut self) {
         if self.stdout.execute(terminal::LeaveAlternateScreen).is_err() {
+            self.add_msg("Error, can't leave alternate screen.");
             eprintln!("{}: Error, can't leave alternate screen.", TITLE);
         }
         if terminal::disable_raw_mode().is_err() {
+            self.add_msg("Error, can't disable raw mode.");
             eprintln!("{}: Error, can't disable terminal raw mode.", TITLE);
             std::process::exit(3);
         }
         println!("Message Log:");
         println!("------------");
         for msg in &self.messages {
-            println!("[{:08}] {}", msg.time().duration_since(self.start_time).as_millis(), msg.get());
+            println!("[{:09.1}] {}", msg.time().duration_since(self.start_time).as_secs_f64(), msg.get());
         }
         println!("------------");
         println!("Text Buffer: {} entries", self.buffer.len());
@@ -99,14 +115,8 @@ impl TerminalView {
             self.last_mode = edit_mode
         } else {
             self.last_position = self.position;
-            let x = if self.edit_mode == EditMode::InputFind {
-                SEARCH_TEXT.len()
-            } else if self.edit_mode == EditMode::InputLoad {
-                LOAD_FILE_TEXT.len()
-            } else {
-                SAVE_FILE_TEXT.len()
-            };
-            self.position = pos!(x + 1, self.size.height + 1);
+            let x = self.user_input.get_start_pos(edit_mode);
+            self.position = pos!(x + self.offset.x, self.size.height + 1);
             self.move_to(self.position);
         }
         self.edit_mode = edit_mode;
@@ -122,11 +132,14 @@ impl TerminalView {
         self.edit_mode
     }
 
-    pub fn user_input_mode(&self) -> bool {
-        if self.edit_mode == EditMode::Insert || self.edit_mode == EditMode::Normal {
-            return false;
-        }
-        true
+    pub fn is_modified(&self) -> bool {
+        self.buffer.is_modified()
+    }
+
+    pub fn new_file(&mut self) {
+        self.buffer = TextBuffer::new();
+        self.add_msg("New file created.");
+        self.set_edit_mode(EditMode::Normal);
     }
 
     pub fn open_file(&mut self, filename: &str) {
@@ -151,7 +164,7 @@ impl TerminalView {
         self.messages.last()
     }
 
-    pub fn render(&mut self, user_input: &str) {
+    pub fn render(&mut self) {
         self.use_colors(self.colors.default_pair());
         self.clear_screen();
         self.print_titlebar();
@@ -183,7 +196,7 @@ impl TerminalView {
                 self.print_at(pos!(0, y + self.offset.y), &line);
             }
         }
-        self.print_statusbar(user_input);
+        self.print_statusbar();
         self.move_to(self.position + self.offset);
         self.flush();
     }
@@ -200,7 +213,7 @@ impl TerminalView {
         self.print_at(pos!(x, 0), &title);
     }
 
-    fn print_statusbar(&mut self, user_input: &str) {
+    fn print_statusbar(&mut self) {
         let status = self.get_msg();
         let mut msg_txt = String::new();
         if let Some(msg) = status && !msg.is_expired() {
@@ -210,8 +223,9 @@ impl TerminalView {
         self.use_colors(self.colors.bar_pair());
         self.clear_line(self.size.height + 1);
         if self.user_input_mode() {
-            if self.edit_mode == EditMode::InputFind {
-                self.print_at(pos!(0, self.size.height + 1), &format!("{} {}", SEARCH_TEXT, user_input));
+            self.print_at(pos!(0, self.size.height + 1), &self.user_input.get_line(self.edit_mode));
+            if !msg_txt.is_empty() {
+                self.print_at(pos!(self.size.width - msg_txt.chars().count(), self.size.height + 1), &msg_txt);
             }
         } else {
             self.print_at(pos!(0, self.size.height + 1),&msg_txt);
@@ -271,8 +285,8 @@ impl TerminalView {
         self.buffer.delete(&self.position);
     }
 
-    pub fn find_text(&mut self, string_to_find: &str) -> (usize,usize) {
-        if let Some(position) = self.buffer.find(string_to_find, &(self.position + self.offset)) {
+    pub fn find_text(&mut self, str_to_find: &str) -> (usize,usize) {
+        if let Some(position) = self.buffer.find(str_to_find, &(self.position + self.offset)) {
             (position.x,position.y)
         } else {
             (0,0)
@@ -352,24 +366,73 @@ impl TerminalView {
         self.position = cursor;
     }
 
-    pub fn move_user_input_cursor(&mut self, key_code: KeyCode) {
+    pub fn is_marking(&self) -> bool {
+        self.marking
+    }
+
+    pub fn start_marking(&mut self) {
+        self.marking = true;
+        self.marking_start = self.position;
+        self.add_msg(&format!("Start marking at: {}", self.marking_start));
+    }
+
+    pub fn end_marking(&mut self) {
+        self.marking_end = self.position;
+        self.marked_text = self.buffer.get_range(&self.marking_start, &self.marking_end);
+        self.add_msg(&format!("Marking from: {}, to: {}.", self.marking_start, self.marking_end));
+    }
+
+    pub fn copy_marked_text_to_clipboard(&mut self) {
+        self.stdout.execute(CopyToClipboard::to_clipboard_from(&self.marked_text)).unwrap();
+        self.add_msg(&format!("Copied {} to clipboard.", self.marked_text));
+        self.reset_marking();
+    }
+
+    pub fn reset_marking(&mut self) {
+        self.marking = false;
+        self.marking_start = Position::default();
+        self.marking_end = Position::default();
+        self.marked_text.clear();
+    }
+
+    pub fn user_input_mode(&self) -> bool {
+        self.edit_mode == EditMode::InputFind || self.edit_mode == EditMode::InputLoad || self.edit_mode == EditMode::InputSaveAs
+    }
+
+    pub fn user_input_get(&self) -> String {
+        self.user_input.get()
+    }
+
+    pub fn user_input_insert_char(&mut self, ch: char) {
+        let pos = self.user_input.len() + 1;
+        self.user_input.insert(pos, ch);
+        self.user_input_move_cursor(KeyCode::Right);
+    }
+
+    pub fn user_input_delete_char(&mut self) {
+        if self.user_input.is_empty() {
+            return;
+        }
+        let pos = (self.position.x + self.offset.x) - self.user_input.get_start_pos(self.edit_mode);
+        self.user_input.delete(pos);
+    }
+
+    pub fn user_input_clear(&mut self) {
+        self.user_input.clear();
+    }
+
+    pub fn user_input_move_cursor(&mut self, key_code: KeyCode) {
         let term_width = self.size.width;
-        let min_x = if self.edit_mode == EditMode::InputFind {
-            SEARCH_TEXT.len()
-        } else if self.edit_mode == EditMode::InputLoad {
-            LOAD_FILE_TEXT.len()
-        } else {
-            SAVE_FILE_TEXT.len()
-        };
+        let min_x = self.user_input.get_start_pos(self.edit_mode);
         let mut cursor = self.position;
         match key_code {
             KeyCode::Left => {
-                if cursor.x > min_x + 1 {
+                if cursor.x > min_x {
                     cursor.x -= 1;
                 }
             },
             KeyCode::Right => {
-                if cursor.x < term_width - 1 {
+                if cursor.x < term_width - 1 && cursor.x < min_x + self.user_input.len() {
                     cursor.x += 1;
                 }
             }

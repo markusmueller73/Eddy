@@ -1,4 +1,4 @@
-use crossterm::style::{Color, Colors};
+use crossterm::style::{Color, Colors, available_color_count};
 
 pub struct ColorPairs {
     bg: Color,
@@ -14,6 +14,7 @@ pub struct ColorPairs {
 
 impl ColorPairs {
     pub fn new() -> ColorPairs {
+        let nb_of_colors = available_color_count();
         ColorPairs {
             bg: Color::Rgb {r: 0, g: 0, b: 0},
             fg: Color::Rgb {r: 224, g: 224, b: 224},

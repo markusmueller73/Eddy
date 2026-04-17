@@ -7,4 +7,4 @@ license =  "MIT license"
 edition = "2024"
 
 [dependencies]
-crossterm = "0.29"
+crossterm = { version = "0.29", features = ["osc52"] }

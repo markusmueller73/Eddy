@@ -94,6 +94,24 @@ impl TextBuffer {
         self.rows.get(index)
     }
 
+    pub fn get_range(&self, start: &Position, end: &Position) -> String {
+        let mut result = String::new();
+        for y in start.y..=end.y {
+            if let Some(row) = self.rows.get(y) {
+                if y == start.y && y == end.y {
+                    result.push_str(&row.get(start.x, end.x));
+                } else if y == start.y {
+                    result.push_str(&row.get(start.x, row.len().saturating_sub(1)));
+                } else if y == end.y {
+                    result.push_str(&row.get(0, end.x));
+                } else {
+                    result.push_str(&row.get(0, row.len().saturating_sub(1)));
+                }
+            }
+        }
+        result
+    }
+
     pub fn insert(&mut self, at: &Position, char: char) {
         let y = at.y;
         if y > self.rows.len() {

@@ -13,6 +13,7 @@ pub struct EditorSettings {
     pub edit_mode: EditMode,
     pub tab_type: TabType,
     pub tab_size: usize,
+    pub msg_delay: usize,
 }
 
 impl Default for EditorSettings {
@@ -21,6 +22,7 @@ impl Default for EditorSettings {
             edit_mode: EditMode::Normal,
             tab_type: TabType::Space,
             tab_size: 4,
+            msg_delay: 10000,
         }
     }
 }

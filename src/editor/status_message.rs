@@ -1,9 +1,5 @@
 use std::time::{Duration, Instant};
 
-pub const SEARCH_TEXT: &str = "Search:";
-pub const LOAD_FILE_TEXT: &str = "Filename:";
-pub const SAVE_FILE_TEXT: &str = "Set new filename:";
-
 pub struct StatusMessage {
     message: String,
     start: Instant,
@@ -15,7 +11,7 @@ impl StatusMessage {
         StatusMessage {
             message: message.to_string(),
             start: Instant::now(),
-            delay: Duration::from_millis(5000),
+            delay: Duration::from_millis(10000),
         }
     }
     pub fn get(&self) -> &str {
