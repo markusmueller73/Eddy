@@ -40,6 +40,9 @@ impl ColorPairs {
         Colors::new(self.fg_linenb, self.bg_linenb)
     }
     pub fn marker_pair(&self) -> Colors {
+        Colors::new(self.bg_linenb, self.fg_linenb)
+    }
+    pub fn special_pair(&self) -> Colors {
         Colors::new(self.fg_marker, self.bg)
     }
 }

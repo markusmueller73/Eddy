@@ -29,13 +29,20 @@ impl Row {
         self.content.iter().collect()
     }
 
-    pub fn get(&self, from: usize, to: usize) -> String {
+    pub fn get(&self, pos: usize) -> String {
+        if self.is_empty() {
+            return String::new();
+        }
+        self.content[pos].to_string()
+    }
+
+    pub fn get_range(&self, from: usize, to: usize) -> String {
         if self.is_empty() {
             return String::new();
         }
         let start = from;
         let end = if to >= self.len {
-            self.len - 1
+            self.len.saturating_sub(1)
         } else {
             to
         };
@@ -96,6 +103,23 @@ impl Row {
             return;
         }
         self.content.remove(at);
+        self.len -= 1;
+    }
+
+    pub fn delete_range(&mut self, from: usize, to: usize) {
+        if self.content.is_empty() {
+            return;
+        }
+        if from >= self.len {
+            return;
+        }
+        let start = from;
+        let end = if to >= self.len {
+            self.len.saturating_sub(1)
+        } else {
+            to
+        };
+        self.content.drain(start..=end);
         self.len = self.content.len();
     }
 

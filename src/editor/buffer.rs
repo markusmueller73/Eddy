@@ -99,17 +99,32 @@ impl TextBuffer {
         for y in start.y..=end.y {
             if let Some(row) = self.rows.get(y) {
                 if y == start.y && y == end.y {
-                    result.push_str(&row.get(start.x, end.x));
+                    result.push_str(&row.get_range(start.x, end.x));
                 } else if y == start.y {
-                    result.push_str(&row.get(start.x, row.len().saturating_sub(1)));
+                    result.push_str(&row.get_range(start.x, row.len().saturating_sub(1)));
                 } else if y == end.y {
-                    result.push_str(&row.get(0, end.x));
+                    result.push_str(&row.get_range(0, end.x));
                 } else {
-                    result.push_str(&row.get(0, row.len().saturating_sub(1)));
+                    result.push_str(&row.get_range(0, row.len().saturating_sub(1)));
                 }
             }
         }
         result
+    }
+
+    pub fn delete_range(&mut self, start: &Position, end: &Position) {
+        for y in start.y..=end.y {
+            let row_len = self.rows[y].len();
+            if y == start.y && y == end.y {
+                self.rows[y].delete_range(start.x, end.x);
+            } else if y == start.y {
+                self.rows[y].delete_range(start.x, row_len);
+            } else if y == end.y {
+                self.rows[y].delete_range(0, end.x);
+            } else {
+                self.rows[y].delete_range(0, row_len);
+            }
+        }
     }
 
     pub fn insert(&mut self, at: &Position, char: char) {

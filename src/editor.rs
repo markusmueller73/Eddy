@@ -1,8 +1,8 @@
 // Part of Eddy - A lightweight text editor for the terminal.
-mod buffer;
-mod color_pairs;
 #[macro_use]
 mod position;
+mod buffer;
+mod color_pairs;
 mod row;
 mod settings;
 mod status_input;
@@ -114,7 +114,7 @@ pub fn run() -> Result<(), i32> {
                                 }
                                 KeyCode::Char('x') => {
                                     // Cut
-                                    view.copy_marked_text_to_clipboard();
+                                    view.cut_marked_text_to_clipboard();
                                 }
                                 KeyCode::Char('z') => {
                                     // Undo

@@ -184,16 +184,39 @@ impl TerminalView {
                 self.offset.x
             };
             let end = start + self.size.width - 1;
-            let line = row.get(start, end);
+            let line = row.get_range(start, end);
             if y  == self.position.y {
                 // highlight the current line
                 self.use_colors(self.colors.hilite_pair());
                 self.clear_line(y + self.offset.y);
                 self.print_at(pos!(0, y + self.offset.y), &line);
-                self.use_colors(self.colors.default_pair());
             } else {
+                self.use_colors(self.colors.default_pair());
                 self.clear_line(y + self.offset.y);
                 self.print_at(pos!(0, y + self.offset.y), &line);
+            }
+            if self.is_marking() {
+                self.use_colors(self.colors.marker_pair());
+                let len = line.len().saturating_sub(1);
+                if y == self.marking_start.y && y == self.marking_end.y {
+                    for x in self.marking_start.x..=self.marking_end.x {
+                        let ch = line.chars().nth(x).unwrap_or(' ').to_string();
+                        self.print_at(pos!(x, y + self.offset.y), &ch);
+                    }
+                } else if  y == self.marking_start.y {
+                    for x in self.marking_start.x..=len {
+                        let ch = line.chars().nth(x).unwrap_or(' ').to_string();
+                        self.print_at(pos!(x, y + self.offset.y), &ch);
+                    }
+                } else if y == self.marking_end.y {
+                    for x in 0..=self.marking_end.x {
+                        let ch = line.chars().nth(x).unwrap_or(' ').to_string();
+                        self.print_at(pos!(x, y + self.offset.y), &ch);
+                    }
+                } else if y > self.marking_start.y && y < self.marking_end.y {
+                    self.print_at(pos!(0, y + self.offset.y), &line);
+                }
+                self.use_colors(self.colors.default_pair());
             }
         }
         self.print_statusbar();
@@ -385,6 +408,13 @@ impl TerminalView {
     pub fn copy_marked_text_to_clipboard(&mut self) {
         self.stdout.execute(CopyToClipboard::to_clipboard_from(&self.marked_text)).unwrap();
         self.add_msg(&format!("Copied {} to clipboard.", self.marked_text));
+        self.reset_marking();
+    }
+
+    pub fn cut_marked_text_to_clipboard(&mut self) {
+        self.stdout.execute(CopyToClipboard::to_clipboard_from(&self.marked_text)).unwrap();
+        self.add_msg(&format!("Copied {} to clipboard.", &self.marked_text));
+        self.buffer.delete_range(&self.marking_start, &self.marking_end);
         self.reset_marking();
     }
 
