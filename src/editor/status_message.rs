@@ -1,3 +1,4 @@
+// Part of Eddy - A lightweight text editor for the terminal.
 use std::time::{Duration, Instant};
 
 pub struct StatusMessage {
@@ -16,9 +17,6 @@ impl StatusMessage {
     }
     pub fn get(&self) -> &str {
         &self.message
-    }
-    pub fn time(&self) -> Instant {
-        self.start
     }
     pub fn is_expired(&self) -> bool {
         self.start.elapsed() > self.delay

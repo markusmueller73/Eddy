@@ -1,12 +1,4 @@
-use crate::editor::{
-    TITLE, VERSION,
-    buffer::TextBuffer,
-    color_pairs::ColorPairs,
-    settings::{EditorSettings, TabType},
-    position::{Position, Size},
-    status_input::*,
-    status_message::StatusMessage,
-};
+use crate::editor::{TITLE, buffer::TextBuffer, color_pairs::ColorPairs, position::{Position, Size}};
 use crossterm::{
     ExecutableCommand,
     QueueableCommand,
@@ -16,87 +8,58 @@ use crossterm::{
     style,
     terminal::{self, ClearType}
 };
-use std::{io::{Stdout, Write, stdout}, time::Instant};
+use std::io::{Stdout, Write, stdout};
 
 pub struct TerminalView {
-    config: EditorSettings,
     stdout: Stdout,
-    buffer: TextBuffer,
-    user_input: StatusInput,
-    edit_mode: EditMode,
-    last_mode: EditMode,
     position: Position,
-    last_position: Position,
     offset: Position,
     marking: bool,
-    marked_text: String,
     marking_start: Position,
     marking_end: Position,
+    user_input: bool,
     size: Size,
     colors: ColorPairs,
-    start_time: Instant,
-    messages: Vec<StatusMessage>
 }
 
 impl TerminalView {
 
     /// Creates a new `TerminalView` instance with default settings.
     pub fn new() -> TerminalView {
-        let cfg = EditorSettings::default();
         let mut tv = TerminalView {
-            config: cfg,
             stdout: stdout(),
-            buffer: TextBuffer::new(),
-            user_input: StatusInput::new(),
-            edit_mode: cfg.edit_mode,
-            last_mode: cfg.edit_mode,
             position: Position::default(),
-            last_position: Position::default(),
             offset: pos!(0, 1), // leave space for line nummbers and title bar
             marking: false,
-            marked_text: String::new(),
             marking_start: Position::default(),
             marking_end: Position::default(),
+            user_input: false,
             size: Size::default(),
             colors: ColorPairs::new(),
-            start_time: Instant::now(),
-            messages: Vec::new()
         };
         if terminal::enable_raw_mode().is_err() {
-            tv.add_msg("Error, can't enable terminal raw mode.");
             eprintln!("{}: Error, can't enable terminal raw mode.", TITLE);
             std::process::exit(1);
         }
         if tv.stdout.execute(terminal::EnterAlternateScreen).is_err() {
-            tv.add_msg("Error, can't enter alternate screen.");
             eprintln!("{}: Error, can't enter alternate screen.", TITLE);
             terminal::disable_raw_mode().unwrap();
             std::process::exit(2);
         }
         tv.size = tv.terminal_size();
         tv.size.height -= 2; // leave space for title and status bar
-        tv.add_msg(&format!("Welcome to {} v{}", TITLE, VERSION));
         tv
     }
 
     pub fn quit(&mut self) {
         if self.stdout.execute(terminal::LeaveAlternateScreen).is_err() {
-            self.add_msg("Error, can't leave alternate screen.");
             eprintln!("{}: Error, can't leave alternate screen.", TITLE);
+            std::process::exit(2);
         }
         if terminal::disable_raw_mode().is_err() {
-            self.add_msg("Error, can't disable raw mode.");
             eprintln!("{}: Error, can't disable terminal raw mode.", TITLE);
-            std::process::exit(3);
+            std::process::exit(1);
         }
-        println!("Message Log:");
-        println!("------------");
-        for msg in &self.messages {
-            println!("[{:09.1}] {}", msg.time().duration_since(self.start_time).as_secs_f64(), msg.get());
-        }
-        println!("------------");
-        println!("Text Buffer: {} entries", self.buffer.len());
-        println!("Last cursor pos: {}x{}", self.position.x, self.position.y)
     }
 
     pub fn resize(&mut self, width: usize, height: usize) {
@@ -110,71 +73,21 @@ impl TerminalView {
         size!(w as usize, h as usize)
     }
 
-    pub fn set_edit_mode(&mut self, edit_mode: EditMode) {
-        if edit_mode == EditMode::Insert || edit_mode == EditMode::Normal {
-            self.last_mode = edit_mode
-        } else {
-            self.last_position = self.position;
-            let x = self.user_input.get_start_pos(edit_mode);
-            self.position = pos!(x + self.offset.x, self.size.height + 1);
-            self.move_to(self.position);
-        }
-        self.edit_mode = edit_mode;
+    pub fn position(&self) -> Position {
+        self.position + self.offset
     }
 
-    pub fn set_last_mode(&mut self) {
-        self.edit_mode = self.last_mode;
-        self.position = self.last_position;
-        self.move_to(self.position);
-    }
-
-    pub fn edit_mode(&self) -> EditMode {
-        self.edit_mode
-    }
-
-    pub fn is_modified(&self) -> bool {
-        self.buffer.is_modified()
-    }
-
-    pub fn new_file(&mut self) {
-        self.buffer = TextBuffer::new();
-        self.add_msg("New file created.");
-        self.set_edit_mode(EditMode::Normal);
-    }
-
-    pub fn open_file(&mut self, filename: &str) {
-        self.buffer = if let Some(buffer) = TextBuffer::open(filename) {
-            self.add_msg(&format!("Loaded {} successfully.", filename));
-            buffer
-        } else {
-            self.add_msg(&format!("Failed to load {}.", filename));
-            TextBuffer::new()
-        };
-    }
-
-    pub fn save_file(&mut self, filename: &str) {
-        self.buffer.save(filename);
-    }
-
-    pub fn add_msg(&mut self, message: &str) {
-        self.messages.push(StatusMessage::new(message));
-    }
-
-    fn get_msg(&self) -> Option<&StatusMessage> {
-        self.messages.last()
-    }
-
-    pub fn render(&mut self) {
+    pub fn render(&mut self, buffer: &TextBuffer, last_message: &str) {
         self.use_colors(self.colors.default_pair());
         self.clear_screen();
-        self.print_titlebar();
+        self.print_titlebar(buffer);
         // Draw the buffer rows
         self.use_colors(self.colors.default_pair());
         for y in 0..self.size.height {
-            if self.buffer.is_empty() {
+            if buffer.is_empty() {
                 break;
             }
-            let row = match self.buffer.row(y) {
+            let row = match buffer.row(y) {
                 Some(row) => row,
                 None => break,
             };
@@ -219,16 +132,16 @@ impl TerminalView {
                 self.use_colors(self.colors.default_pair());
             }
         }
-        self.print_statusbar();
+        self.print_statusbar(last_message);
         self.move_to(self.position + self.offset);
         self.flush();
     }
 
-    fn print_titlebar(&mut self) {
-        let title: String = if self.buffer.is_modified() {
-            format!("{} - {} [*]", TITLE, self.buffer.filename())
+    fn print_titlebar(&mut self, buffer: &TextBuffer) {
+        let title: String = if buffer.is_modified() {
+            format!("{} - {} [*]", TITLE, buffer.filename())
         } else {
-            format!("{} - {}", TITLE, self.buffer.filename())
+            format!("{} - {}", TITLE, buffer.filename())
         };
         let x = (self.size.width - title.len()) / 2;
         self.use_colors(self.colors.bar_pair());
@@ -236,24 +149,14 @@ impl TerminalView {
         self.print_at(pos!(x, 0), &title);
     }
 
-    fn print_statusbar(&mut self) {
-        let status = self.get_msg();
-        let mut msg_txt = String::new();
-        if let Some(msg) = status && !msg.is_expired() {
-            msg_txt = msg.get().to_string();
-        }
+    fn print_statusbar(&mut self, message: &str) {
         let pos_txt = format!("↓{} →{}", self.position.y + self.offset.y, self.position.x + self.offset.x);
         self.use_colors(self.colors.bar_pair());
         self.clear_line(self.size.height + 1);
-        if self.user_input_mode() {
-            self.print_at(pos!(0, self.size.height + 1), &self.user_input.get_line(self.edit_mode));
-            if !msg_txt.is_empty() {
-                self.print_at(pos!(self.size.width - msg_txt.chars().count(), self.size.height + 1), &msg_txt);
-            }
-        } else {
-            self.print_at(pos!(0, self.size.height + 1),&msg_txt);
-            self.print_at(pos!(self.size.width - pos_txt.chars().count() - 2, self.size.height + 1), &pos_txt);
+        if !message.is_empty() {
+            self.print_at(pos!(0, self.size.height + 1), message);
         }
+        self.print_at(pos!(self.size.width - pos_txt.chars().count() - 2, self.size.height + 1), &pos_txt);
     }
 
     fn flush(&mut self) {
@@ -286,41 +189,11 @@ impl TerminalView {
         self.stdout.queue(style::SetColors(colors)).unwrap();
     }
 
-    pub fn insert_char(&mut self, char: char) {
-        self.buffer.insert(&self.position, char);
-        if char == '\t' && self.config.tab_type == TabType::Space {
-            self.position.x += self.config.tab_size - 1;
-        }
-        self.move_cursor(KeyCode::Right);
-    }
-
-    pub fn insert_newline(&mut self) {
-        self.buffer.insert_newline(&self.position);
-        self.move_cursor(KeyCode::Right);
-    }
-
-    pub fn delete_char(&mut self) {
-        self.buffer.delete(&self.position);
-    }
-
-    pub fn delete_char_before(&mut self) {
-        self.move_cursor(KeyCode::Left);
-        self.buffer.delete(&self.position);
-    }
-
-    pub fn find_text(&mut self, str_to_find: &str) -> (usize,usize) {
-        if let Some(position) = self.buffer.find(str_to_find, &(self.position + self.offset)) {
-            (position.x,position.y)
-        } else {
-            (0,0)
-        }
-    }
-
-    pub fn move_cursor(&mut self, key_code: KeyCode) {
+    pub fn move_cursor(&mut self, buffer: &TextBuffer, key_code: KeyCode) {
         let term_height = self.size.height;
         let mut cursor = self.position;
-        let buff_height = self.buffer.len();
-        let mut buff_width = if let Some(row) = self.buffer.row(cursor.y) {
+        let buff_height = buffer.len();
+        let mut buff_width = if let Some(row) = buffer.row(cursor.y) {
             row.len()
         } else {
             0
@@ -341,7 +214,7 @@ impl TerminalView {
                     cursor.x -= 1;
                 } else if cursor.y > 0 {
                     cursor.y -= 1;
-                    if let Some(row) = self.buffer.row(cursor.y) {
+                    if let Some(row) = buffer.row(cursor.y) {
                         cursor.x = row.len();
                     } else {
                         cursor.x = 0;
@@ -378,7 +251,7 @@ impl TerminalView {
             },
             _ => {}
         }
-        buff_width = if let Some(row) = self.buffer.row(cursor.y) {
+        buff_width = if let Some(row) = buffer.row(cursor.y) {
             row.len()
         } else {
             0
@@ -396,77 +269,33 @@ impl TerminalView {
     pub fn start_marking(&mut self) {
         self.marking = true;
         self.marking_start = self.position;
-        self.add_msg(&format!("Start marking at: {}", self.marking_start));
     }
 
     pub fn end_marking(&mut self) {
         self.marking_end = self.position;
-        self.marked_text = self.buffer.get_range(&self.marking_start, &self.marking_end);
-        self.add_msg(&format!("Marking from: {}, to: {}.", self.marking_start, self.marking_end));
     }
 
-    pub fn copy_marked_text_to_clipboard(&mut self) {
-        self.stdout.execute(CopyToClipboard::to_clipboard_from(&self.marked_text)).unwrap();
-        self.add_msg(&format!("Copied {} to clipboard.", self.marked_text));
-        self.reset_marking();
+    pub fn get_marked_positions(&self) -> (Position,Position) {
+        (self.marking_start, self.marking_end)
     }
 
-    pub fn cut_marked_text_to_clipboard(&mut self) {
-        self.stdout.execute(CopyToClipboard::to_clipboard_from(&self.marked_text)).unwrap();
-        self.add_msg(&format!("Copied {} to clipboard.", &self.marked_text));
-        self.buffer.delete_range(&self.marking_start, &self.marking_end);
-        self.reset_marking();
+    pub fn copy_text_to_clipboard(&mut self, text: &str) {
+        self.stdout.execute(CopyToClipboard::to_clipboard_from(text)).unwrap();
     }
 
     pub fn reset_marking(&mut self) {
         self.marking = false;
         self.marking_start = Position::default();
         self.marking_end = Position::default();
-        self.marked_text.clear();
     }
 
-    pub fn user_input_mode(&self) -> bool {
-        self.edit_mode == EditMode::InputFind || self.edit_mode == EditMode::InputLoad || self.edit_mode == EditMode::InputSaveAs
-    }
-
-    pub fn user_input_get(&self) -> String {
-        self.user_input.get()
-    }
-
-    pub fn user_input_insert_char(&mut self, ch: char) {
-        let pos = self.user_input.len() + 1;
-        self.user_input.insert(pos, ch);
-        self.user_input_move_cursor(KeyCode::Right);
-    }
-
-    pub fn user_input_delete_char(&mut self) {
-        if self.user_input.is_empty() {
-            return;
-        }
-        let pos = (self.position.x + self.offset.x) - self.user_input.get_start_pos(self.edit_mode);
-        self.user_input.delete(pos);
-    }
-
-    pub fn user_input_clear(&mut self) {
-        self.user_input.clear();
-    }
-
-    pub fn user_input_move_cursor(&mut self, key_code: KeyCode) {
+    pub fn user_input_move_cursor(&mut self, min_x: usize, length: usize, key_code: KeyCode) {
         let term_width = self.size.width;
-        let min_x = self.user_input.get_start_pos(self.edit_mode);
         let mut cursor = self.position;
-        match key_code {
-            KeyCode::Left => {
-                if cursor.x > min_x {
-                    cursor.x -= 1;
-                }
-            },
-            KeyCode::Right => {
-                if cursor.x < term_width - 1 && cursor.x < min_x + self.user_input.len() {
-                    cursor.x += 1;
-                }
-            }
-            _ => {}
+        if key_code == KeyCode::Left && cursor.x > min_x {
+            cursor.x -= 1;
+        } else if key_code == KeyCode::Right && cursor.x < min_x + length {
+            cursor.x += 1;
         }
         if cursor.x > term_width - 1 {
             cursor.x = term_width - 1;
@@ -480,6 +309,7 @@ impl TerminalView {
 pub enum EditMode {
     InputFind,
     InputLoad,
+    InputReplace,
     InputSaveAs,
     Insert,
     #[default]

@@ -1,6 +1,8 @@
-use crate::editor::{EditMode, row::Row};
+// Part of Eddy - A lightweight text editor for the terminal.
+use crate::editor::{view::EditMode, row::Row};
 
 pub const SEARCH_TEXT: &str = "Search:";
+pub const REPLACE_TEXT: &str = "Replace:";
 pub const LOAD_FILE_TEXT: &str = "Filename:";
 pub const SAVE_FILE_TEXT: &str = "Set new filename:";
 
@@ -22,6 +24,7 @@ impl StatusInput {
         let str = match edit_mode {
             EditMode::InputFind => SEARCH_TEXT,
             EditMode::InputLoad => LOAD_FILE_TEXT,
+            EditMode::InputReplace => REPLACE_TEXT,
             EditMode::InputSaveAs => SAVE_FILE_TEXT,
             _ => "",
         };
@@ -46,6 +49,7 @@ impl StatusInput {
         let x = match edit_mode {
             EditMode::InputFind => SEARCH_TEXT.len(),
             EditMode::InputLoad => LOAD_FILE_TEXT.len(),
+            EditMode::InputReplace => REPLACE_TEXT.len(),
             EditMode::InputSaveAs => SAVE_FILE_TEXT.len(),
             _ => 0,
         };
