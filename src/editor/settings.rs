@@ -15,7 +15,7 @@ pub struct EditorSettings {
     pub edit_mode: EditMode,
     pub tab_type: TabType,
     pub tab_size: usize,
-    pub msg_delay: usize,
+    pub msg_delay: u64,
 }
 
 impl Default for EditorSettings {

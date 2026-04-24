@@ -1,4 +1,4 @@
-use crate::editor::{TITLE, buffer::TextBuffer, color_pairs::ColorPairs, position::{Position, Size}};
+use crate::editor::{TITLE, buffer::TextBuffer, color_pairs::ColorPairs, position::{Position, Size}, status_input::StatusInput, status_message::StatusMessage};
 use crossterm::{
     ExecutableCommand,
     QueueableCommand,
@@ -17,7 +17,6 @@ pub struct TerminalView {
     marking: bool,
     marking_start: Position,
     marking_end: Position,
-    user_input: bool,
     size: Size,
     colors: ColorPairs,
 }
@@ -33,7 +32,6 @@ impl TerminalView {
             marking: false,
             marking_start: Position::default(),
             marking_end: Position::default(),
-            user_input: false,
             size: Size::default(),
             colors: ColorPairs::new(),
         };
@@ -74,10 +72,11 @@ impl TerminalView {
     }
 
     pub fn position(&self) -> Position {
-        self.position + self.offset
+        self.position
     }
 
-    pub fn render(&mut self, buffer: &TextBuffer, last_message: &str) {
+    //pub fn render(&mut self, buffer: &TextBuffer, last_message: &str) {
+    pub fn render(&mut self, buffer: &TextBuffer, input: &StatusInput, message: &StatusMessage) {
         self.use_colors(self.colors.default_pair());
         self.clear_screen();
         self.print_titlebar(buffer);
@@ -132,7 +131,7 @@ impl TerminalView {
                 self.use_colors(self.colors.default_pair());
             }
         }
-        self.print_statusbar(last_message);
+        self.print_statusbar(input, message);
         self.move_to(self.position + self.offset);
         self.flush();
     }
@@ -149,14 +148,31 @@ impl TerminalView {
         self.print_at(pos!(x, 0), &title);
     }
 
-    fn print_statusbar(&mut self, message: &str) {
-        let pos_txt = format!("↓{} →{}", self.position.y + self.offset.y, self.position.x + self.offset.x);
+    fn print_statusbar(&mut self, input: &StatusInput, message: &StatusMessage) {
+        let pos_txt = format!("yx: ↓{} →{}", self.position.y, self.position.x + 1);
+        let mark_txt = format!("[yx]: {} → {}", self.marking_start, self.marking_end);
+        let mode_txt = if input.get_mode() == EditMode::Insert {
+            "INSERT"
+        } else if input.get_mode() == EditMode::Normal {
+            "NORMAL"
+        } else {
+            "INPUT "
+        };
         self.use_colors(self.colors.bar_pair());
-        self.clear_line(self.size.height + 1);
-        if !message.is_empty() {
-            self.print_at(pos!(0, self.size.height + 1), message);
+        let y_pos = self.size.height + 1;
+        self.clear_line(y_pos);
+        self.print_at(pos!(self.size.width - 8, y_pos), mode_txt);
+        self.print_at(pos!(self.size.width - pos_txt.chars().count() - 10, y_pos), &pos_txt);
+        if self.is_marking() {
+            self.print_at(pos!(self.size.width - mark_txt.chars().count() - pos_txt.chars().count() - 12, self.size.height + 1), &pos_txt);
         }
-        self.print_at(pos!(self.size.width - pos_txt.chars().count() - 2, self.size.height + 1), &pos_txt);
+        if input.is_active() {
+            self.print_at(pos!(0, y_pos), &input.get_content());
+        } else {
+            if !message.is_expired() {
+                self.print_at(pos!(0, y_pos), message.get());
+            }
+        }
     }
 
     fn flush(&mut self) {
@@ -189,6 +205,11 @@ impl TerminalView {
         self.stdout.queue(style::SetColors(colors)).unwrap();
     }
 
+    pub fn place_cursor(&mut self, position: Position) {
+        self.position = position;
+        self.move_to(position);
+    }
+
     pub fn move_cursor(&mut self, buffer: &TextBuffer, key_code: KeyCode) {
         let term_height = self.size.height;
         let mut cursor = self.position;
@@ -200,14 +221,14 @@ impl TerminalView {
         };
         match key_code {
             KeyCode::Up => {
-                if cursor.y > 0 {
-                    cursor.y -= 1;
-                }
+                cursor.y = cursor.y.saturating_sub(1);
             },
             KeyCode::Down => {
-                if cursor.y < buff_height {
-                    cursor.y += 1;
-                }
+                cursor.y = if cursor.y < buff_height {
+                    cursor.y.saturating_add(1)
+                } else {
+                    cursor.y
+                };
             },
             KeyCode::Left => {
                 if cursor.x > 0 {

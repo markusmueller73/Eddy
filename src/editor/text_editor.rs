@@ -1,12 +1,14 @@
 use crate::editor::{
     TITLE, VERSION,
     buffer::{DEFAULT_FILENAME, TextBuffer},
+    position::Position,
     settings::EditorSettings,
     status_input::StatusInput,
     status_message::StatusMessage,
     view::{EditMode, TerminalView},
 };
 use crossterm::{event::{self, Event, KeyCode, KeyModifiers}};
+use std::time::Duration;
 
 pub struct TextEditor {
     config: EditorSettings,
@@ -16,6 +18,7 @@ pub struct TextEditor {
     status_message: Vec<StatusMessage>,
     show_help_menu: bool,
     create_new_file: bool,
+    replace_mode: bool,
     current_edit_mode: EditMode,
     last_edit_mode: EditMode,
     to_find: String,
@@ -33,6 +36,7 @@ impl TextEditor {
             status_message: Vec::new(),
             show_help_menu: false,
             create_new_file: false,
+            replace_mode: false,
             current_edit_mode: EditMode::default(),
             last_edit_mode: EditMode::default(),
             to_find: String::new(),
@@ -47,7 +51,7 @@ impl TextEditor {
         editor.add_status_message(&format!("Welcome to {} v{}", TITLE, VERSION));
         // render the editor view for the first time
         // this will initialize the terminal and draw the editor UI
-        editor.view.render(&editor.buffer, "");
+        editor.view.render(&editor.buffer, &editor.status_input, editor.status_message.last().unwrap());
         // Then, load the file if a filename was provided
         if !filename.is_empty() {
             match TextBuffer::open(filename) {
@@ -67,17 +71,7 @@ impl TextEditor {
                     break;
                 }
             }
-            let last_message = match editor.status_message.last() {
-                Some(message) => {
-                    if message.is_expired() {
-                        ""
-                    } else {
-                        message.get()
-                    }
-                },
-                None => "",
-            };
-            editor.view.render(&editor.buffer, last_message);
+            editor.view.render(&editor.buffer, &editor.status_input, editor.status_message.last().unwrap());
         }
         editor.view.quit();
         editor.config.save();
@@ -86,7 +80,11 @@ impl TextEditor {
 
     /// Adds a status message to be displayed to the user.
     pub fn add_status_message(&mut self, message: &str) {
-        self.status_message.push(StatusMessage::new(message));
+        self.status_message.push(StatusMessage::new(message, Duration::from_millis(self.config.msg_delay)));
+    }
+
+    pub fn is_edit_mode(&self) -> bool {
+        self.current_edit_mode == EditMode::Insert || self.current_edit_mode == EditMode::Normal
     }
 
     /// Processed the whole user input here and handle events.
@@ -105,8 +103,9 @@ impl TextEditor {
                         // Save File As
                         //
                         KeyCode::Char('s') => {
-                            self.status_input.clear();
+                            self.last_edit_mode = self.current_edit_mode;
                             self.current_edit_mode = EditMode::InputSaveAs;
+                            self.status_input.set_mode(self.current_edit_mode);
                         }
                         //
                         // Redo
@@ -135,8 +134,9 @@ impl TextEditor {
                         // Find
                         //
                         KeyCode::Char('f') => {
-                            self.status_input.clear();
+                            self.last_edit_mode = self.current_edit_mode;
                             self.current_edit_mode = EditMode::InputFind;
+                            self.status_input.set_mode(self.current_edit_mode);
                         }
                         //
                         // Help
@@ -150,8 +150,9 @@ impl TextEditor {
                         KeyCode::Char('n') => {
                             if self.buffer.is_modified() {
                                 if self.buffer.filename() == DEFAULT_FILENAME || self.buffer.filename().is_empty() {
-                                    self.status_input.clear();
+                                    self.last_edit_mode = self.current_edit_mode;
                                     self.current_edit_mode = EditMode::InputSaveAs;
+                                    self.status_input.set_mode(self.current_edit_mode);
                                     self.create_new_file = true;
                                 } else {
                                     match self.buffer.save() {
@@ -173,16 +174,18 @@ impl TextEditor {
                         // Open File
                         //
                         KeyCode::Char('o') => {
-                            self.status_input.clear();
+                            self.last_edit_mode = self.current_edit_mode;
                             self.current_edit_mode = EditMode::InputLoad;
+                            self.status_input.set_mode(self.current_edit_mode);
                         }
                         //
                         // Save File
                         //
                         KeyCode::Char('s') => {
                             if self.buffer.filename() == DEFAULT_FILENAME || self.buffer.filename().is_empty() {
-                                self.status_input.clear();
+                                self.last_edit_mode = self.current_edit_mode;
                                 self.current_edit_mode = EditMode::InputSaveAs;
+                                self.status_input.set_mode(self.current_edit_mode);
                             } else {
                                 match self.buffer.save() {
                                     Ok(_) => {
@@ -192,7 +195,6 @@ impl TextEditor {
                                         self.add_status_message(&format!("Failed to save file: {}", err));
                                     }
                                 }
-                                self.current_edit_mode = self.last_edit_mode;
                             }
                         }
                         //
@@ -205,24 +207,10 @@ impl TextEditor {
                         // Replace
                         //
                         KeyCode::Char('r') => {
-                            match self.current_edit_mode {
-                                EditMode::Insert | EditMode::Normal => {
-                                    self.last_edit_mode = self.current_edit_mode;
-                                    self.current_edit_mode = EditMode::InputFind;
-                                    self.status_input.clear();
-                                }
-                                EditMode::InputFind => {
-                                    self.to_find = self.status_input.get();
-                                    self.current_edit_mode = EditMode::InputReplace;
-                                    self.status_input.clear();
-                                }
-                                EditMode::InputReplace => {
-                                    self.to_replace = self.status_input.get();
-                                    self.current_edit_mode = self.last_edit_mode;
-                                    self.status_input.clear();
-                                }
-                                _ => {}
-                            }
+                            self.last_edit_mode = self.current_edit_mode;
+                            self.current_edit_mode = EditMode::InputFind;
+                            self.status_input.set_mode(self.current_edit_mode);
+                            self.replace_mode = true;
                         }
                         //
                         // Paste
@@ -273,10 +261,13 @@ impl TextEditor {
                         // Insert the upper case character into the buffer or into the status bar
                         //
                         KeyCode::Char(char) => {
+                            let pos = pos!(self.view.position().x + 1, self.view.position().y);
                             if self.current_edit_mode == EditMode::Insert || self.current_edit_mode == EditMode::Normal {
-                                self.buffer.insert(&self.view.position(), char);
+                                self.buffer.insert(&pos, char);
+                                self.view.move_cursor(&self.buffer, KeyCode::Right);
                             } else {
-                                self.status_input.insert(self.view.position().x, char);
+                                self.status_input.insert(pos.x, char);
+                                self.view.user_input_move_cursor(self.status_input.get_start_pos(), self.status_input.len(), KeyCode::Right);
                             }
                         }
                         //
@@ -298,8 +289,8 @@ impl TextEditor {
                             self.view.move_cursor(&self.buffer, KeyCode::Left);
                             self.buffer.delete(&self.view.position());
                         } else {
-                            self.view.user_input_move_cursor(self.status_input.get_start_pos(self.current_edit_mode), self.status_input.len(), KeyCode::Left);
-                            let pos = self.view.position().x - self.status_input.get_start_pos(self.current_edit_mode);
+                            self.view.user_input_move_cursor(self.status_input.get_start_pos(), self.status_input.len(), KeyCode::Left);
+                            let pos = self.view.position().x - self.status_input.get_start_pos();
                             self.status_input.delete(pos);
                         }
                     }
@@ -307,10 +298,13 @@ impl TextEditor {
                     // Insert the character into the buffer or the user input in the status bar
                     //
                     KeyCode::Char(char) => {
+                        let pos = pos!(self.view.position().x + 1, self.view.position().y);
                         if self.current_edit_mode == EditMode::Insert || self.current_edit_mode == EditMode::Normal {
-                            self.buffer.insert(&self.view.position(), char);
+                            self.buffer.insert(&pos, char);
+                            self.view.move_cursor(&self.buffer, KeyCode::Right);
                         } else {
-                            self.status_input.insert(self.view.position().x, char);
+                            self.status_input.insert(pos.x, char);
+                            self.view.user_input_move_cursor(self.status_input.get_start_pos(), self.status_input.len(), KeyCode::Right);
                         }
                     }
                     //
@@ -328,16 +322,37 @@ impl TextEditor {
                     //
                     KeyCode::Enter => {
                         match self.current_edit_mode {
+
                             EditMode::InputFind => {
-                                if let Some(pos) = self.buffer.find(&self.status_input.get(), &self.view.position()) {
+                                self.to_find = self.status_input.as_string();
+                                if self.replace_mode {
+                                    self.current_edit_mode = EditMode::InputReplace;
+                                    self.status_input.set_mode(self.current_edit_mode);
+                                } else {
+                                    if let Some(pos) = self.buffer.find(&self.to_find, &self.view.position()) {
+                                        self.view.place_cursor(pos);
+                                        self.add_status_message(&format!("Found text at position {}x{}.", pos.x, pos.y));
+                                    } else {
+                                        self.add_status_message(&format!("Search phrase '{}' not found.", self.status_input.as_string()));
+                                    }
+                                    self.current_edit_mode = self.last_edit_mode;
+                                }
+                            },
+
+                            EditMode::InputReplace => {
+                                self.to_replace = self.status_input.as_string();
+                                if let Some(pos) = self.buffer.find(&self.to_find, &self.view.position()) {
+                                    self.view.place_cursor(pos);
                                     self.add_status_message(&format!("Found text at position {}x{}.", pos.x, pos.y));
                                 } else {
-                                    self.add_status_message(&format!("Search phrase '{}' not found.", self.status_input.get()));
+                                    self.add_status_message(&format!("Search phrase '{}' not found.", self.status_input.as_string()));
                                 }
                                 self.current_edit_mode = self.last_edit_mode;
+                                self.replace_mode = false;
                             },
+
                             EditMode::InputLoad => {
-                                let filename = self.status_input.get();
+                                let filename = self.status_input.as_string();
                                 if filename.is_empty() {
                                     self.add_status_message("Please enter a valid filename.");
                                 } else {
@@ -353,16 +368,9 @@ impl TextEditor {
                                 }
                                 self.current_edit_mode = self.last_edit_mode;
                             },
-                            EditMode::InputReplace => {
-                                if let Some(pos) = self.buffer.find(&self.to_find, &self.view.position()) {
-                                    self.add_status_message(&format!("Found text at position {}x{}.", pos.x, pos.y));
-                                } else {
-                                    self.add_status_message(&format!("Search phrase '{}' not found.", self.status_input.get()));
-                                }
-                                self.current_edit_mode = self.last_edit_mode;
-                            },
+
                             EditMode::InputSaveAs => {
-                                let filename = self.status_input.get();
+                                let filename = self.status_input.as_string();
                                 if filename.is_empty() {
                                     self.add_status_message("Please enter a valid filename.");
                                 } else {
@@ -379,11 +387,13 @@ impl TextEditor {
                                             self.add_status_message(&format!("Failed to save file: {}", err));
                                         }
                                     }
-                                    self.current_edit_mode = self.last_edit_mode;
                                 }
+                                self.current_edit_mode = self.last_edit_mode;
                             },
+
                             _ => {
                                 self.buffer.insert_newline(&self.view.position());
+                                self.view.move_cursor(&self.buffer, KeyCode::Right);
                             }
                         }
                     }
@@ -392,7 +402,7 @@ impl TextEditor {
                         if self.current_edit_mode == EditMode::Insert {
                             self.current_edit_mode = EditMode::Normal;
                         } else if self.current_edit_mode == EditMode::Normal {
-                            //self.current_edit_mode = EditMode::Insert;
+                            self.current_edit_mode = EditMode::Insert;
                         }
                     }
                     //
@@ -408,15 +418,15 @@ impl TextEditor {
                         if self.view.is_marking() {
                             self.view.reset_marking();
                         }
-                        if self.current_edit_mode == EditMode::Insert || self.current_edit_mode == EditMode::Normal {
+                        if self.is_edit_mode() {
                             self.view.move_cursor(&self.buffer, key.code);
                         }
                     }
                     KeyCode::Left | KeyCode::Right => {
-                        if self.current_edit_mode == EditMode::Insert || self.current_edit_mode == EditMode::Normal {
+                        if self.is_edit_mode() {
                             self.view.move_cursor(&self.buffer, key.code);
                         } else {
-                            self.view.user_input_move_cursor(self.status_input.get_start_pos(self.current_edit_mode), self.status_input.len(), key.code);
+                            self.view.user_input_move_cursor(self.status_input.get_start_pos(), self.status_input.len(), key.code);
                         }
                     }
                     //

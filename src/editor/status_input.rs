@@ -9,19 +9,44 @@ pub const SAVE_FILE_TEXT: &str = "Set new filename:";
 #[derive(Debug, Default)]
 pub struct StatusInput {
     content: Row,
+    mode: EditMode,
+    position: usize,
 }
 
 impl StatusInput {
     pub fn new() -> Self {
         Self {
             content: Row::default(),
+            mode: EditMode::default(),
+            position: 0,
         }
     }
-    pub fn get(&self) -> String {
+    pub fn is_active(&self) -> bool {
+        self.mode != EditMode::Insert && self.mode != EditMode::Normal
+    }
+    pub fn as_string(&self) -> String {
         self.content.as_string()
     }
-    pub fn get_line(&self, edit_mode: EditMode) -> String {
-        let str = match edit_mode {
+    pub fn set_mode(&mut self, mode: EditMode) {
+        self.clear();
+        self.mode = mode;
+        self.position = self.get_start_pos();
+    }
+    pub fn get_mode(&self) -> EditMode {
+        self.mode
+    }
+    pub fn get_start_pos(&self) -> usize {
+        let x = match self.mode {
+            EditMode::InputFind => SEARCH_TEXT.len(),
+            EditMode::InputLoad => LOAD_FILE_TEXT.len(),
+            EditMode::InputReplace => REPLACE_TEXT.len(),
+            EditMode::InputSaveAs => SAVE_FILE_TEXT.len(),
+            _ => 0,
+        };
+        x + 1
+    }
+    pub fn get_content(&self) -> String {
+        let str = match self.mode {
             EditMode::InputFind => SEARCH_TEXT,
             EditMode::InputLoad => LOAD_FILE_TEXT,
             EditMode::InputReplace => REPLACE_TEXT,
@@ -33,9 +58,6 @@ impl StatusInput {
     pub fn len(&self) -> usize {
         self.content.len()
     }
-    pub fn is_empty(&self) -> bool {
-        self.content.is_empty()
-    }
     pub fn insert(&mut self, pos: usize, ch: char) {
         self.content.insert(pos, ch);
     }
@@ -44,15 +66,5 @@ impl StatusInput {
     }
     pub fn clear(&mut self) {
         self.content.clear();
-    }
-    pub fn get_start_pos(&self, edit_mode: EditMode) -> usize {
-        let x = match edit_mode {
-            EditMode::InputFind => SEARCH_TEXT.len(),
-            EditMode::InputLoad => LOAD_FILE_TEXT.len(),
-            EditMode::InputReplace => REPLACE_TEXT.len(),
-            EditMode::InputSaveAs => SAVE_FILE_TEXT.len(),
-            _ => 0,
-        };
-        x + 1
     }
 }

@@ -31,7 +31,7 @@ impl std::ops::Sub for Position {
 /// `Display` trait to print out a `Position` in the editor.
 impl std::fmt::Display for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({}x{})", self.x, self.y)
+        write!(f, "{}:{}", self.x, self.y)
     }
 }
 
