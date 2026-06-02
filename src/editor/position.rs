@@ -1,6 +1,6 @@
 // Part of Eddy - A lightweight text editor for the terminal.
 //! Position, representing a cursor position in the editor.
-#[derive(Copy, Clone, Default, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
 pub struct Position {
     pub x: usize,
     pub y: usize,
@@ -48,6 +48,13 @@ macro_rules! pos {
 pub struct Size {
     pub width: usize,
     pub height: usize,
+}
+
+/// `Display` trait to print out a `Position` in the editor.
+impl std::fmt::Display for Size {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}x{}", self.width, self.height)
+    }
 }
 
 /// Macro for creating a `Size` struct.

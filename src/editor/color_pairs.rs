@@ -17,6 +17,7 @@ pub struct ColorPairs {
 impl ColorPairs {
     pub fn new() -> ColorPairs {
         let nb_of_colors = available_color_count();
+        debug!("<ColorPairs::new>: nb_of_colors={}", nb_of_colors);
         let cp: ColorPairs = match nb_of_colors {
             0..=2 => {
                 ColorPairs {

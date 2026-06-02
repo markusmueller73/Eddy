@@ -1,6 +1,7 @@
 use crate::editor::{
     TITLE, VERSION,
     buffer::{DEFAULT_FILENAME, TextBuffer},
+    history::{HistoryAction, HistoryManager},
     position::Position,
     settings::EditorSettings,
     status_input::StatusInput,
@@ -8,12 +9,13 @@ use crate::editor::{
     view::{EditMode, TerminalView},
 };
 use crossterm::{event::{self, Event, KeyCode, KeyModifiers}};
-use std::time::Duration;
+use std::{char, time::Duration};
 
 pub struct TextEditor {
     config: EditorSettings,
     view: TerminalView,
     buffer: TextBuffer,
+    history: HistoryManager,
     status_input: StatusInput,
     status_message: Vec<StatusMessage>,
     show_help_menu: bool,
@@ -32,6 +34,7 @@ impl TextEditor {
             config: EditorSettings::load(),
             view: TerminalView::new(),
             buffer: TextBuffer::new(),
+            history: HistoryManager::new(),
             status_input: StatusInput::new(),
             status_message: Vec::new(),
             show_help_menu: false,
@@ -111,7 +114,7 @@ impl TextEditor {
                         // Redo
                         //
                         KeyCode::Char('z') => {
-                            // ToDo!
+                            self.history.redo(&mut self.buffer);
                         }
                         _ => {}
                     }
@@ -216,7 +219,7 @@ impl TextEditor {
                         // Paste
                         //
                         KeyCode::Char('v') => {
-                            // ToDo!
+                            self.view.paste_from_clipboard(&self.view.position());
                         }
                         //
                         // Cut
@@ -231,7 +234,7 @@ impl TextEditor {
                         // Undo
                         //
                         KeyCode::Char('z') => {
-                            // ToDo!
+                            self.history.undo(&mut self.buffer);
                         }
                         //
                         // Unused KeyCodes
@@ -261,12 +264,17 @@ impl TextEditor {
                         // Insert the upper case character into the buffer or into the status bar
                         //
                         KeyCode::Char(char) => {
-                            let pos = pos!(self.view.position().x + 1, self.view.position().y);
-                            if self.current_edit_mode == EditMode::Insert || self.current_edit_mode == EditMode::Normal {
+
+                            if self.current_edit_mode == EditMode::Insert {
+                                self.buffer.insert(&self.view.position(), char);
+                                self.view.move_cursor(&self.buffer, KeyCode::Right);
+                            } else if self.current_edit_mode == EditMode::Normal {
+                                let pos = pos!(self.view.position().x + 1, self.view.position().y);
                                 self.buffer.insert(&pos, char);
                                 self.view.move_cursor(&self.buffer, KeyCode::Right);
                             } else {
-                                self.status_input.insert(pos.x, char);
+                                let pos = self.view.position().x + 1;
+                                self.status_input.insert(pos, char);
                                 self.view.user_input_move_cursor(self.status_input.get_start_pos(), self.status_input.len(), KeyCode::Right);
                             }
                         }
@@ -287,7 +295,9 @@ impl TextEditor {
                     KeyCode::Backspace => {
                         if self.current_edit_mode == EditMode::Insert || self.current_edit_mode == EditMode::Normal {
                             self.view.move_cursor(&self.buffer, KeyCode::Left);
+                            let char = self.buffer.get_char(&self.view.position());
                             self.buffer.delete(&self.view.position());
+                            self.history.add_action(HistoryAction::DelChar { char, position: self.view.position() });
                         } else {
                             self.view.user_input_move_cursor(self.status_input.get_start_pos(), self.status_input.len(), KeyCode::Left);
                             let pos = self.view.position().x - self.status_input.get_start_pos();
@@ -298,12 +308,18 @@ impl TextEditor {
                     // Insert the character into the buffer or the user input in the status bar
                     //
                     KeyCode::Char(char) => {
-                        let pos = pos!(self.view.position().x + 1, self.view.position().y);
-                        if self.current_edit_mode == EditMode::Insert || self.current_edit_mode == EditMode::Normal {
+                        if self.current_edit_mode == EditMode::Insert {
+                            self.buffer.delete(&self.view.position());
+                            self.buffer.insert(&self.view.position(), char);
+                            self.view.move_cursor(&self.buffer, KeyCode::Right);
+                        } else if self.current_edit_mode == EditMode::Normal {
+                            let pos = pos!(self.view.position().x + 1, self.view.position().y);
                             self.buffer.insert(&pos, char);
                             self.view.move_cursor(&self.buffer, KeyCode::Right);
+                            self.history.add_action(HistoryAction::AddChar { char, position: pos });
                         } else {
-                            self.status_input.insert(pos.x, char);
+                            let pos = self.view.position().x + 1;
+                            self.status_input.insert(pos, char);
                             self.view.user_input_move_cursor(self.status_input.get_start_pos(), self.status_input.len(), KeyCode::Right);
                         }
                     }
@@ -312,7 +328,9 @@ impl TextEditor {
                     //
                     KeyCode::Delete => {
                         if self.current_edit_mode == EditMode::Insert || self.current_edit_mode == EditMode::Normal {
+                            let char = self.buffer.get_char(&self.view.position());
                             self.buffer.delete(&self.view.position());
+                            self.history.add_action(HistoryAction::DelChar { char, position: self.view.position() });
                         } else {
                             self.status_input.delete(self.view.position().x);
                         }
@@ -336,6 +354,7 @@ impl TextEditor {
                                         self.add_status_message(&format!("Search phrase '{}' not found.", self.status_input.as_string()));
                                     }
                                     self.current_edit_mode = self.last_edit_mode;
+                                    self.status_input.set_mode(self.current_edit_mode);
                                 }
                             },
 
@@ -348,6 +367,7 @@ impl TextEditor {
                                     self.add_status_message(&format!("Search phrase '{}' not found.", self.status_input.as_string()));
                                 }
                                 self.current_edit_mode = self.last_edit_mode;
+                                self.status_input.set_mode(self.current_edit_mode);
                                 self.replace_mode = false;
                             },
 
@@ -367,6 +387,7 @@ impl TextEditor {
                                     }
                                 }
                                 self.current_edit_mode = self.last_edit_mode;
+                                self.status_input.set_mode(self.current_edit_mode);
                             },
 
                             EditMode::InputSaveAs => {
@@ -389,11 +410,13 @@ impl TextEditor {
                                     }
                                 }
                                 self.current_edit_mode = self.last_edit_mode;
+                                self.status_input.set_mode(self.current_edit_mode);
                             },
 
                             _ => {
                                 self.buffer.insert_newline(&self.view.position());
                                 self.view.move_cursor(&self.buffer, KeyCode::Right);
+                                self.history.add_action(HistoryAction::AddNewline { position: self.view.position() });
                             }
                         }
                     }
@@ -404,6 +427,7 @@ impl TextEditor {
                         } else if self.current_edit_mode == EditMode::Normal {
                             self.current_edit_mode = EditMode::Insert;
                         }
+                        self.status_input.set_mode(self.current_edit_mode);
                     }
                     //
                     // Insert a tab character

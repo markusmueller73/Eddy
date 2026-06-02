@@ -1,41 +1,56 @@
-use std::fs;
+use crate::editor::{position::Position, row::Row, buffer::TextBuffer};
 use std::collections::VecDeque;
 
 #[derive(Debug)]
-pub enum Action {
-    WriteFile { path: String, content: String },
+pub enum HistoryAction {
+    AddChar { char: char, position: Position },
+    DelChar { char: char, position: Position },
+    AddNewline { position: Position },
+    DelNewline { position: Position },
 }
 
-impl Action {
-    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
+impl HistoryAction {
+
+    fn redo(&self, buffer: &mut TextBuffer) {
         match self {
-            Action::WriteFile { path, content } => {
-                fs::write(path, content)?;
+            HistoryAction::AddChar { char, position } => {
+                buffer.insert(position, *char);
+            }
+            HistoryAction::DelChar { char: _, position } => {
+                buffer.delete(position);
+            }
+            HistoryAction::AddNewline { position } => {
+                //
+            }
+            HistoryAction::DelNewline { position } => {
+                //
             }
         }
-        Ok(())
     }
 
-    fn undo(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn undo(&self, buffer: &mut TextBuffer) {
         match self {
-            Action::WriteFile { path, .. } => {
-                // To make this simple, we'll just delete the file on undo
-                fs::remove_file(path)?;
+            HistoryAction::AddChar { char: _, position } => {
+                buffer.delete(position);
+            }
+            HistoryAction::DelChar { char, position } => {
+                buffer.insert(position, *char);
+            }
+            HistoryAction::AddNewline { position } => {
+                //
+            }
+            HistoryAction::DelNewline { position } => {
+                //
             }
         }
-        Ok(())
     }
 
-    fn redo(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.execute()?;
-        Ok(())
-    }
 }
 
 
 pub struct HistoryManager {
-    undo_stack: VecDeque<Action>,
-    redo_stack: VecDeque<Action>,
+    undo_stack: VecDeque<HistoryAction>,
+    redo_stack: VecDeque<HistoryAction>,
 }
 
 impl HistoryManager {
@@ -46,42 +61,22 @@ impl HistoryManager {
         }
     }
 
-    pub fn add_action(&mut self, action: Action) -> Result<(), Box<dyn std::error::Error>> {
-        action.execute()?;
+    pub fn add_action(&mut self, action: HistoryAction) {
         self.undo_stack.push_back(action);
         self.redo_stack.clear(); // Clear the redo stack when adding a new action
-        Ok(())
     }
 
-    pub fn undo(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn undo(&mut self, buffer: &mut TextBuffer) {
         if let Some(action) = self.undo_stack.pop_back() {
-            action.undo()?;
+            action.undo(buffer);
             self.redo_stack.push_back(action);
         }
-        Ok(())
     }
 
-    pub fn redo(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn redo(&mut self, buffer: &mut TextBuffer) {
         if let Some(action) = self.redo_stack.pop_back() {
-            action.redo()?;
+            action.redo(buffer);
             self.undo_stack.push_back(action);
         }
-        Ok(())
     }
 }
-
-// fn main() -> Result<(), Box<dyn std::error::Error>> {
-//     let mut history = HistoryManager::new();
-
-//     // Example usage: writing a file and then undoing it
-//     let action1 = Action::WriteFile { path: "test.txt".to_string(), content: "Hello, world!".to_string() };
-//     history.add_action(action1)?;
-
-//     println!("File written. Undoing...");
-//     history.undo()?;
-
-//     println!("File undone. Redoing...");
-//     history.redo()?;
-
-//     Ok(())
-// }

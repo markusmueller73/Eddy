@@ -3,6 +3,7 @@
 //! The `Row` struct holds a vector of `char` and provides methods for accessing
 //! and modifying the row's content.
 //! The vector of chars is used to store ascii and unicode (UTF-8) characters.
+
 #[derive(Debug, Default)]
 pub struct Row {
     content: Vec<char>,
@@ -39,20 +40,28 @@ impl Row {
         self.content.iter().collect()
     }
 
+    /// Returns the character at the given index in the row.
+    pub fn get_char(&self, index: usize) -> char {
+        self.content.get(index).copied().unwrap_or(' ')
+    }
+
     /// Returns a `String` representation of the row from `from` to `to`, inclusive.
     pub fn get_range(&self, from: usize, to: usize) -> String {
         if self.is_empty() {
+            debug!("<get_range>: Row is empty.");
             return String::new();
         }
         let start = from;
         let end = if to >= self.len {
+            debug!("<get_range>: End is beyond row length.");
             self.len.saturating_sub(1)
         } else {
             to
         };
+        debug!("<get_range>: Start={} -> End={}", start, end);
         let temp_vec = self.content[start..=end].to_vec();
-        let content: String = temp_vec.iter().collect();
-        content
+        let result: String = temp_vec.iter().collect();
+        result
     }
 
     /// Adds the content of another `Row` to this `Row`.
@@ -119,17 +128,21 @@ impl Row {
     /// Deletes the characters in the specified range in this `Row`.
     pub fn delete_range(&mut self, from: usize, to: usize) {
         if self.content.is_empty() {
+            debug!("<delete_range>: Row is empty.");
             return;
         }
         if from >= self.len {
+            debug!("<delete_range>: Start is beyond row length.");
             return;
         }
         let start = from;
         let end = if to >= self.len {
+            debug!("<delete_range>: End is beyond row length.");
             self.len.saturating_sub(1)
         } else {
             to
         };
+        debug!("<delete_range>: Start={} -> End={}", start, end);
         self.content.drain(start..=end);
         self.len = self.content.len();
     }
@@ -138,10 +151,11 @@ impl Row {
     /// starting from the specified position.
     pub fn find(&self, to_find: &str, from: usize) -> Option<usize> {
         if to_find.is_empty() || from >= self.len {
+            debug!("<find>: 'to_find' is empty or 'from' is beyond row length.");
             return None;
         }
-        let content: String = self.content.iter().skip(from).collect();
-        content.find(to_find)
+        let result: String = self.content.iter().skip(from).collect();
+        result.find(to_find)
     }
 
 }

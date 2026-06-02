@@ -10,9 +10,13 @@
 //! LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 //! OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 //! SOFTWARE.
+#[macro_use]
+pub mod logger;
 mod editor;
 
 fn main() -> Result<(), i32> {
+    // Start selfmade small file logging
+    crate::logger::DebugLog::init();
     // Get the first command line argument, it is by default the name of the executeable
     let exe = std::env::args().next().unwrap_or(crate::editor::TITLE.to_ascii_lowercase());
     // Create a String vector from the rest of the command line arguments and check if any

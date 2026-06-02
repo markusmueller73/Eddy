@@ -1,7 +1,8 @@
 // Part of Eddy - A lightweight text editor for the terminal.
 //! TextBuffer, a structure representing a text buffer containing multiple rows of text.
 //! Any row is is a struct of `Row`. All `Row`s are stored in a `Vec`.
-use crate::editor::{row::Row, position::Position};
+
+use crate::{editor::{row::Row, position::Position}};
 use std::{fs::File, io::{BufRead, BufReader, BufWriter, Write}};
 
 /// The default file name used when no file is specified.
@@ -43,10 +44,12 @@ impl TextBuffer {
                             row_vec.push(Row::new(line));
                         },
                         Err(err) => {
+                            error!("<open>: {}", err);
                             return Err(err);
                         }
                     }
                 }
+                debug!("<open>: file '{}' opened successfully, read {} lines", file_name, row_vec.len());
                 Ok(TextBuffer{
                     rows: row_vec,
                     modified: false,
@@ -54,6 +57,7 @@ impl TextBuffer {
                 })
             },
             Err(err) => {
+                error!("<open>: {}", err);
                 Err(err)
             }
         }
@@ -69,12 +73,14 @@ impl TextBuffer {
                     match buf_writer.write_all(row_string.as_bytes()) {
                         Ok(()) => {}
                         Err(err) => {
+                            error!("<save>: {}", err);
                             return Err(err);
                         }
                     }
                     match buf_writer.write_all(EOL.as_bytes()) {
                         Ok(()) => {}
                         Err(err) => {
+                            error!("<save>: {}", err);
                             return Err(err);
                         }
                     }
@@ -82,12 +88,15 @@ impl TextBuffer {
                 match buf_writer.flush() {
                     Ok(()) => {}
                     Err(err) => {
+                        error!("<save>: {}", err);
                         return Err(err);
                     }
                 }
                 self.modified = false;
+                debug!("<save>: file '{}' saved successfully", self.file_name);
             }
             Err(err) => {
+                error!("<save>: {}", err);
                 return Err(err);
             }
         }
@@ -122,6 +131,15 @@ impl TextBuffer {
     /// Returns a reference to the row at the given index, if it exists.
     pub fn row(&self, index: usize) -> Option<&Row> {
         self.rows.get(index)
+    }
+
+    /// Returns the character at the given position in the buffer.
+    pub fn get_char(&self, at: &Position) -> char {
+        if let Some(row) = self.rows.get(at.y) {
+            row.get_char(at.x)
+        } else {
+            ' '
+        }
     }
 
     /// Returns the content of the buffer from `start` to `end` `Position` as a string.
@@ -164,6 +182,7 @@ impl TextBuffer {
     pub fn insert(&mut self, at: &Position, char: char) {
         let y = at.y;
         if y > self.rows.len() {
+            debug!("<insert>: position out of bounds: y={} is greater than rows.len()={}", y, self.rows.len());
             return;
         }
         if char == '\n' || char == '\r'{
@@ -187,6 +206,7 @@ impl TextBuffer {
     pub fn insert_newline(&mut self, at: &Position) {
         let y = at.y;
         if y > self.rows.len() {
+            debug!("<insert_newline>: position out of bounds: y={} is greater than rows.len()={}", y, self.rows.len());
             return;
         }
         if y == self.rows.len() {
@@ -202,6 +222,7 @@ impl TextBuffer {
     /// Deletes the character at the given `Position`.
     pub fn delete(&mut self, at: &Position) {
         if at.y >= self.rows.len() {
+            debug!("<delete>: position out of bounds: y={} is greater than rows.len()={}", at.y, self.rows.len());
             return;
         }
         if at.x == self.rows[at.y].len() && at.y + 1 < self.rows.len() {
@@ -218,6 +239,7 @@ impl TextBuffer {
     /// Finds the first occurrence of `query` in the buffer starting at `at`.
     pub fn find(&self, query: &str, at: &Position) -> Option<Position> {
         if at.y >= self.rows.len() {
+            debug!("<find>: position out of bounds: y={} is greater than rows.len()={}", at.y, self.rows.len());
             return None;
         }
         let mut x_pos = at.x;
@@ -228,6 +250,7 @@ impl TextBuffer {
                 }
                 x_pos = 0;
             } else {
+                debug!("<find>: row {} is out of bounds", y);
                 return None;
             }
         }

@@ -1,8 +1,17 @@
-use crate::editor::{TITLE, buffer::TextBuffer, color_pairs::ColorPairs, position::{Position, Size}, status_input::StatusInput, status_message::StatusMessage};
+use crate::{
+    editor::{
+        TITLE,
+        buffer::TextBuffer,
+        color_pairs::ColorPairs,
+        position::{Position, Size},
+        status_input::StatusInput,
+        status_message::StatusMessage,
+    },
+};
 use crossterm::{
     ExecutableCommand,
     QueueableCommand,
-    clipboard::CopyToClipboard,
+    clipboard::{CopyToClipboard},
     cursor,
     event::KeyCode,
     style,
@@ -36,26 +45,27 @@ impl TerminalView {
             colors: ColorPairs::new(),
         };
         if terminal::enable_raw_mode().is_err() {
-            eprintln!("{}: Error, can't enable terminal raw mode.", TITLE);
+            error!("<TerminalView::new>: can't enable terminal raw mode.");
             std::process::exit(1);
         }
         if tv.stdout.execute(terminal::EnterAlternateScreen).is_err() {
-            eprintln!("{}: Error, can't enter alternate screen.", TITLE);
+            error!("<TerminalView::new>: can't enter alternate screen.");
             terminal::disable_raw_mode().unwrap();
             std::process::exit(2);
         }
         tv.size = tv.terminal_size();
+        debug!("<TerminalView::new>: size={}x{}", tv.size.width, tv.size.height);
         tv.size.height -= 2; // leave space for title and status bar
         tv
     }
 
     pub fn quit(&mut self) {
         if self.stdout.execute(terminal::LeaveAlternateScreen).is_err() {
-            eprintln!("{}: Error, can't leave alternate screen.", TITLE);
+            error!("<TerminalView::quit>: can't leave alternate screen.");
             std::process::exit(2);
         }
         if terminal::disable_raw_mode().is_err() {
-            eprintln!("{}: Error, can't disable terminal raw mode.", TITLE);
+            error!("<TerminalView::quit>: can't disable terminal raw mode.");
             std::process::exit(1);
         }
     }
@@ -151,20 +161,14 @@ impl TerminalView {
     fn print_statusbar(&mut self, input: &StatusInput, message: &StatusMessage) {
         let pos_txt = format!("yx: ↓{} →{}", self.position.y, self.position.x + 1);
         let mark_txt = format!("[yx]: {} → {}", self.marking_start, self.marking_end);
-        let mode_txt = if input.get_mode() == EditMode::Insert {
-            "INSERT"
-        } else if input.get_mode() == EditMode::Normal {
-            "NORMAL"
-        } else {
-            "INPUT "
-        };
+        let mode_txt = format!("{}", input.get_mode());
         self.use_colors(self.colors.bar_pair());
         let y_pos = self.size.height + 1;
         self.clear_line(y_pos);
-        self.print_at(pos!(self.size.width - 8, y_pos), mode_txt);
+        self.print_at(pos!(self.size.width - 8, y_pos), &mode_txt);
         self.print_at(pos!(self.size.width - pos_txt.chars().count() - 10, y_pos), &pos_txt);
         if self.is_marking() {
-            self.print_at(pos!(self.size.width - mark_txt.chars().count() - pos_txt.chars().count() - 12, self.size.height + 1), &pos_txt);
+            self.print_at(pos!(self.size.width - mark_txt.chars().count() - pos_txt.chars().count() - 12, self.size.height + 1), &mark_txt);
         }
         if input.is_active() {
             self.print_at(pos!(0, y_pos), &input.get_content());
@@ -176,24 +180,34 @@ impl TerminalView {
     }
 
     fn flush(&mut self) {
-        self.stdout.flush().unwrap();
+        if self.stdout.flush().is_err() {
+            warning!("<TerminalView::flush> fails.");
+        }
     }
 
     fn clear_screen(&mut self) {
-        self.stdout.queue(terminal::Clear(ClearType::All)).unwrap();
+        if self.stdout.queue(terminal::Clear(ClearType::All)).is_err() {
+            warning!("<TerminalView::clear_screen> fails.");
+        }
     }
 
     fn clear_line(&mut self, line: usize) {
         self.move_to(pos!(0, line));
-        self.stdout.queue(terminal::Clear(ClearType::CurrentLine)).unwrap();
+        if self.stdout.queue(terminal::Clear(ClearType::CurrentLine)).is_err() {
+            warning!("<TerminalView::clear_line> fails.");
+        }
     }
 
     fn move_to(&mut self, at: Position) {
-        self.stdout.queue(cursor::MoveTo(at.x as u16, at.y as u16)).unwrap();
+        if self.stdout.queue(cursor::MoveTo(at.x as u16, at.y as u16)).is_err() {
+            warning!("<TerminalView::move_to> fails.");
+        }
     }
 
     fn print(&mut self, text: &str) {
-        self.stdout.queue(style::Print(text)).unwrap();
+        if self.stdout.queue(style::Print(text)).is_err() {
+            warning!("<TerminalView::print> fails.");
+        }
     }
 
     fn print_at(&mut self, at: Position, text: &str) {
@@ -202,7 +216,9 @@ impl TerminalView {
     }
 
     fn use_colors(&mut self, colors: style::Colors) {
-        self.stdout.queue(style::SetColors(colors)).unwrap();
+        if self.stdout.queue(style::SetColors(colors)).is_err() {
+            warning!("<TerminalView::use_colors> fails.");
+        }
     }
 
     pub fn place_cursor(&mut self, position: Position) {
@@ -215,8 +231,10 @@ impl TerminalView {
         let mut cursor = self.position;
         let buff_height = buffer.len();
         let mut buff_width = if let Some(row) = buffer.row(cursor.y) {
+            debug!("<TerminalView::move_cursor> row.len() = {}", row.len());
             row.len()
         } else {
+            debug!("<TerminalView::move_cursor> row is empty");
             0
         };
         match key_code {
@@ -301,7 +319,13 @@ impl TerminalView {
     }
 
     pub fn copy_text_to_clipboard(&mut self, text: &str) {
-        self.stdout.execute(CopyToClipboard::to_clipboard_from(text)).unwrap();
+        if self.stdout.execute(CopyToClipboard::to_clipboard_from(text)).is_err() {
+            warning!("<TerminalView::copy_text_to_clipboard> fails.");
+        }
+    }
+
+    pub fn paste_from_clipboard(&mut self, at: &Position) {
+        todo!("Paste from clipboard not implemented.");
     }
 
     pub fn reset_marking(&mut self) {
@@ -335,4 +359,14 @@ pub enum EditMode {
     Insert,
     #[default]
     Normal,
+}
+
+impl std::fmt::Display for EditMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditMode::Insert => write!(f, "INSERT"),
+            EditMode::Normal => write!(f, "NORMAL"),
+            _ => write!(f, "INPUT"),
+        }
+    }
 }
